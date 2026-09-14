@@ -1,0 +1,3 @@
+import { Button, Card, Layout, Page, Stack, Text, TextField } from "@shopify/polaris";
+import { TitleBar } from "@shopify/app-bridge-react";
+export default function Metafields() { return <Page fullWidth><TitleBar title="Metafields" primaryAction={{ content: "Set metafield", onAction: () => {} }} /><Layout><Layout.Section><div style={{ marginTop: 20 }}><Card title="Find a resource" sectioned><Stack vertical><TextField label="Product, variant, or collection" placeholder="Search catalog" autoComplete="off" /><Button>Load metafields</Button></Stack></Card></div></Layout.Section></Layout></Page>; }

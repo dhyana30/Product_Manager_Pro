@@ -1,0 +1,1122 @@
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import {
+  ActionList,
+  Badge,
+  Button,
+  ButtonGroup,
+  Checkbox,
+  Icon,
+  IndexTable,
+  Modal,
+  Page,
+  Popover,
+  Select,
+  Text,
+  TextField,
+  Tooltip,
+  useIndexResourceState,
+  Card,
+  Stack,
+  Filters,
+  ChoiceList
+} from "@shopify/polaris";
+import {
+  CashDollarMinor,
+  Columns3Minor,
+  EditMinor,
+  ExportMinor,
+  FilterMinor,
+  HorizontalDotsMinor,
+  ImageMajor,
+  ImportMinor,
+  PlusMinor,
+  ArrowLeftMinor,
+  SearchMinor,
+  SelectMinor,
+  SortMinor,
+  ViewMinor,
+} from "@shopify/polaris-icons";
+import { TitleBar, Toast } from "@shopify/app-bridge-react";
+import { useAuthenticatedFetch } from "../hooks/useAuthenticatedFetch";
+
+// ---------------------------------------------------------------------------
+// Data wiring below (state, loadProducts, syncCatalog, readApiResponse) is
+// unchanged from the previous version of this page — same endpoints, same
+// request/response handling. Everything else is presentation only.
+// ---------------------------------------------------------------------------
+
+const PAGE_SIZE = 20;
+
+const ALL_COLUMNS = [
+  { key: "image", label: "Image" },
+  { key: "product", label: "Product", locked: true },
+  { key: "variants", label: "Variants" },
+  { key: "status", label: "Status" },
+  { key: "sku", label: "SKU" },
+  { key: "barcode", label: "Barcode" },
+  { key: "inventory", label: "Inventory" },
+  { key: "price", label: "Price" },
+];
+
+const BULK_EDIT_COLUMNS = [
+  { key: "title", label: "Title", type: "text" },
+  { key: "status", label: "Status", type: "select", options: [
+    { label: "Active", value: "active" },
+    { label: "Draft", value: "draft" },
+    { label: "Archived", value: "archived" },
+  ] },
+  { key: "vendor", label: "Vendor", type: "text" },
+  { key: "sku", label: "SKU", type: "text" },
+  { key: "price", label: "Price", type: "number" },
+  { key: "handle", label: "URL handle", type: "text" },
+  { key: "meta_title", label: "SEO title", type: "text" },
+  { key: "meta_description", label: "SEO description", type: "multiline" },
+];
+
+const SORT_OPTIONS = [
+  { value: "title-asc", label: "Product title (A-Z)" },
+  { value: "title-desc", label: "Product title (Z-A)" },
+  { value: "price-asc", label: "Price (low to high)" },
+  { value: "price-desc", label: "Price (high to low)" },
+  { value: "created-desc", label: "Created (newest)" },
+  { value: "created-asc", label: "Created (oldest)" },
+];
+
+export default function Catalog() {
+  const [query, setQuery] = useState("");
+  const [products, setProducts] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isPushing, setIsPushing] = useState(false);
+  const [error, setError] = useState("");
+  const [syncMessage, setSyncMessage] = useState("");
+  const authenticatedFetch = useAuthenticatedFetch();
+
+  const loadProducts = async () => {
+    setIsLoading(true);
+    setError("");
+    try {
+      const response = await authenticatedFetch(`/api/products?search=${encodeURIComponent(query)}`);
+      const payload = await readApiResponse(response);
+      if (!response.ok) throw new Error(payload.message || "Unable to load catalog data.");
+      setProducts(payload.data.map((product) => ({
+        ...product,
+        status: { label: product.status, status: product.status === "active" ? "success" : "attention" },
+        inventory: String(product.inventory),
+      })));
+    } catch (loadError) {
+      setError(loadError.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => { loadProducts(); }, [query]);
+
+  const syncCatalog = async () => {
+    setIsSyncing(true);
+    setError("");
+    try {
+      const response = await authenticatedFetch("/api/sync/pull", { method: "POST" });
+      const payload = await readApiResponse(response);
+      if (!response.ok) throw new Error(payload.message || "Catalog sync failed.");
+      await loadProducts();
+      setSyncMessage(payload.message || "Catalog synced successfully.");
+    } catch (syncError) {
+      setError(syncError.message);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const syncToShopify = async () => {
+    setIsPushing(true);
+    setError("");
+    try {
+      const response = await authenticatedFetch("/api/sync/push", { method: "POST" });
+      const payload = await readApiResponse(response);
+      if (!response.ok) throw new Error(payload.message || "Push sync failed.");
+      setSyncMessage(payload.message || "Changes pushed to Shopify successfully.");
+    } catch (pushError) {
+      setError(pushError.message);
+    } finally {
+      setIsPushing(false);
+    }
+  };
+
+  // -- Presentation-only state below: selection, filters, sort, columns,
+  // pagination and the various popovers/modals. None of it touches the
+  // request/response handling above or issues new network calls. --
+
+  const [confirmSyncOpen, setConfirmSyncOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("");
+  const [vendorFilter, setVendorFilter] = useState("");
+  const [inventoryFilter, setInventoryFilter] = useState("");
+  const [imagesFilter, setImagesFilter] = useState("");
+  const [seoFilter, setSeoFilter] = useState("");
+  const [tagsFilter, setTagsFilter] = useState("");
+  const [dateFilter, setDateFilter] = useState("");
+  const [sortValue, setSortValue] = useState("title-asc");
+  const [visibleColumns, setVisibleColumns] = useState(() => new Set(ALL_COLUMNS.map((c) => c.key)));
+  const [page, setPage] = useState(1);
+  const [previewProductId, setPreviewProductId] = useState(null);
+  const [imagePopup, setImagePopup] = useState(null);
+
+  const [editingId, setEditingId] = useState(null);
+  const [editData, setEditData] = useState({});
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [bulkEditorOpen, setBulkEditorOpen] = useState(false);
+  const [bulkEditorColumns, setBulkEditorColumns] = useState(["title", "status", "vendor", "price"]);
+  const [isSavingBulk, setIsSavingBulk] = useState(false);
+
+  const vendorOptions = useMemo(() => {
+    const vendors = Array.from(new Set(products.map((p) => p.vendor).filter(Boolean))).sort();
+    return vendors.map((v) => ({ label: v, value: v }));
+  }, [products]);
+
+  const filteredProducts = useMemo(() => {
+    return products.filter((p) => {
+      if (statusFilter !== "" && p.status.label !== statusFilter) return false;
+      if (vendorFilter !== "" && p.vendor !== vendorFilter) return false;
+      
+      if (inventoryFilter !== "") {
+        const inv = parseInt(p.inventory, 10);
+        if (inventoryFilter === "in-stock" && inv <= 0) return false;
+        if (inventoryFilter === "out-of-stock" && inv > 0) return false;
+        if (inventoryFilter === "low-stock" && (inv <= 0 || inv > 10)) return false;
+      }
+      
+      if (imagesFilter !== "") {
+        if (imagesFilter === "has-images" && !p.image_url) return false;
+        if (imagesFilter === "missing-images" && p.image_url) return false;
+      }
+      
+      if (seoFilter !== "") {
+        if (seoFilter === "missing-seo" && p.meta_title && p.meta_description) return false;
+      }
+      
+      if (tagsFilter) {
+        if (!p.tags || p.tags.length === 0) return false;
+        const tagMatch = p.tags.some(t => t.toLowerCase().includes(tagsFilter.toLowerCase()));
+        if (!tagMatch) return false;
+      }
+
+      if (dateFilter !== "" && p.updated_at) {
+        const updatedDate = new Date(p.updated_at);
+        const now = new Date();
+        const diffDays = (now - updatedDate) / (1000 * 60 * 60 * 24);
+        if (dateFilter === "last-7-days" && diffDays > 7) return false;
+        if (dateFilter === "last-30-days" && diffDays > 30) return false;
+      }
+
+      return true;
+    });
+  }, [products, statusFilter, vendorFilter, inventoryFilter, imagesFilter, seoFilter, tagsFilter, dateFilter]);
+
+  const sortedProducts = useMemo(() => sortProducts(filteredProducts, sortValue), [filteredProducts, sortValue]);
+
+  const activeFilterCount = (statusFilter !== "" ? 1 : 0) + 
+                            (vendorFilter !== "" ? 1 : 0) +
+                            (inventoryFilter !== "" ? 1 : 0) +
+                            (imagesFilter !== "" ? 1 : 0) +
+                            (seoFilter !== "" ? 1 : 0) +
+                            (tagsFilter ? 1 : 0) +
+                            (dateFilter !== "" ? 1 : 0);
+
+  useEffect(() => { setPage(1); }, [query, statusFilter, vendorFilter, inventoryFilter, imagesFilter, seoFilter, tagsFilter, dateFilter, sortValue]);
+
+  const pageCount = Math.max(1, Math.ceil(sortedProducts.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const pageRows = sortedProducts.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
+  const { selectedResources, allResourcesSelected, handleSelectionChange } = useIndexResourceState(pageRows, {
+    resourceIDResolver: (resource) => String(resource.id),
+  });
+
+  const columns = ALL_COLUMNS.filter((c) => visibleColumns.has(c.key));
+
+  const handleStartEdit = (row) => {
+    setEditingId(row.id);
+    setEditData({ title: row.title, vendor: row.vendor, price: row.price, sku: row.sku });
+  };
+
+  const handleSaveEdit = async () => {
+    setIsSavingEdit(true);
+    try {
+      const response = await authenticatedFetch(`/api/products/${editingId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editData),
+      });
+      if (!response.ok) throw new Error("Failed to save product");
+      
+      setProducts(products.map(p => {
+        if (p.id === editingId) {
+          return { ...p, title: editData.title, vendor: editData.vendor, price: editData.price, sku: editData.sku };
+        }
+        return p;
+      }));
+      setEditingId(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  const handleSaveBulkEdit = async (changes) => {
+    setIsSavingBulk(true);
+    try {
+      await Promise.all(Object.entries(changes).map(async ([id, values]) => {
+        const response = await authenticatedFetch(`/api/products/${id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(values),
+        });
+        const payload = await readApiResponse(response);
+        if (!response.ok) throw new Error(payload.message || "Failed to save bulk changes.");
+      }));
+
+      setProducts((currentProducts) => currentProducts.map((product) => {
+        const values = changes[String(product.id)];
+        if (!values) return product;
+        return {
+          ...product,
+          ...values,
+          status: values.status
+            ? { label: values.status, status: values.status === "active" ? "success" : "attention" }
+            : product.status,
+        };
+      }));
+      setBulkEditorOpen(false);
+      setSyncMessage("Bulk changes saved successfully.");
+    } catch (bulkError) {
+      setError(bulkError.message);
+    } finally {
+      setIsSavingBulk(false);
+    }
+  };
+
+  const selectedProducts = products.filter((product) => selectedResources.includes(String(product.id)));
+
+  if (bulkEditorOpen) {
+    return (
+      <CatalogBulkEditor
+        products={selectedProducts}
+        columns={bulkEditorColumns}
+        onColumnsChange={setBulkEditorColumns}
+        onSave={handleSaveBulkEdit}
+        isSaving={isSavingBulk}
+        onDiscard={() => setBulkEditorOpen(false)}
+      />
+    );
+  }
+
+  return (
+    <Page fullWidth>
+      <TitleBar title="Catalog & Inventory" />
+
+      {syncMessage && (
+        <Toast content={syncMessage} onDismiss={() => setSyncMessage("")} />
+      )}
+      {error && (
+        <Toast content={error} error onDismiss={() => setError("")} />
+      )}
+
+      <Card>
+        <div style={{ padding: '16px', borderBottom: '1px solid #dfe3e8' }}>
+          <Stack alignment="center" distribution="equalSpacing">
+            <Text variant="headingMd">Products</Text>
+            <ButtonGroup>
+              <Button icon={ImportMinor} loading={isSyncing} onClick={() => setConfirmSyncOpen(true)}>
+                Sync from Shopify
+              </Button>
+              <Button icon={ExportMinor} loading={isPushing} onClick={syncToShopify}>
+                Sync to Shopify
+              </Button>
+              <CreateProductButton />
+            </ButtonGroup>
+          </Stack>
+        </div>
+
+        <div style={{ padding: '0 16px 16px', borderBottom: '1px solid #dfe3e8' }}>
+          <Filters
+            queryValue={query}
+            queryPlaceholder="Search products by title, SKU, barcode..."
+            filters={[]}
+            appliedFilters={[
+              ...(statusFilter !== "" ? [{
+                key: "status",
+                label: `Status is ${statusFilter}`,
+                onRemove: () => setStatusFilter(""),
+              }] : []),
+              ...(vendorFilter !== "" ? [{
+                key: "vendor",
+                label: `Vendor is ${vendorFilter}`,
+                onRemove: () => setVendorFilter(""),
+              }] : []),
+              ...(inventoryFilter !== "" ? [{
+                key: "inventory",
+                label: `Inventory is ${inventoryFilter}`,
+                onRemove: () => setInventoryFilter(""),
+              }] : []),
+              ...(imagesFilter !== "" ? [{
+                key: "images",
+                label: `Images is ${imagesFilter}`,
+                onRemove: () => setImagesFilter(""),
+              }] : []),
+              ...(seoFilter !== "" ? [{
+                key: "seo",
+                label: `SEO is ${seoFilter}`,
+                onRemove: () => setSeoFilter(""),
+              }] : []),
+              ...(tagsFilter ? [{
+                key: "tags",
+                label: `Tags contain "${tagsFilter}"`,
+                onRemove: () => setTagsFilter(""),
+              }] : []),
+              ...(dateFilter !== "" ? [{
+                key: "date",
+                label: `Updated ${dateFilter}`,
+                onRemove: () => setDateFilter(""),
+              }] : [])
+            ]}
+            onQueryChange={setQuery}
+            onQueryClear={() => setQuery('')}
+            onClearAll={() => { 
+              setStatusFilter("any"); 
+              setVendorFilter("any"); 
+              setInventoryFilter("any");
+              setImagesFilter("any");
+              setSeoFilter("any");
+              setTagsFilter("");
+              setDateFilter("any");
+              setQuery(""); 
+            }}
+          >
+            <div style={{ paddingLeft: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <FilterPopover 
+                statusFilter={statusFilter} setStatusFilter={setStatusFilter}
+                vendorFilter={vendorFilter} setVendorFilter={setVendorFilter} vendorOptions={vendorOptions}
+                inventoryFilter={inventoryFilter} setInventoryFilter={setInventoryFilter}
+                imagesFilter={imagesFilter} setImagesFilter={setImagesFilter}
+                seoFilter={seoFilter} setSeoFilter={setSeoFilter}
+                tagsFilter={tagsFilter} setTagsFilter={setTagsFilter}
+                dateFilter={dateFilter} setDateFilter={setDateFilter}
+                activeFilterCount={activeFilterCount}
+                onClearAll={() => { 
+                  setStatusFilter(""); 
+                  setVendorFilter(""); 
+                  setInventoryFilter("");
+                  setImagesFilter("");
+                  setSeoFilter("");
+                  setTagsFilter("");
+                  setDateFilter("");
+                  setQuery(""); 
+                }}
+              />
+              <SortPopover value={sortValue} onChange={setSortValue} />
+              <ColumnsButton visibleColumns={visibleColumns} onChange={setVisibleColumns} />
+              <BulkEditPopover
+                disabled={selectedResources.length === 0}
+                count={selectedResources.length}
+                onSelect={() => setBulkEditorOpen(true)}
+              />
+              <PriceButton disabled={selectedResources.length === 0} count={selectedResources.length} />
+            </div>
+          </Filters>
+        </div>
+        <IndexTable
+          resourceName={{ singular: "product", plural: "products" }}
+          itemCount={pageRows.length}
+          selectedItemsCount={allResourcesSelected ? "All" : selectedResources.length}
+          onSelectionChange={handleSelectionChange}
+          headings={[...columns.map((c) => ({ title: c.label })), { title: "" }]}
+          loading={isLoading}
+        >
+          {pageRows.map((row, index) => (
+            <ProductRow
+              key={row.id}
+              row={row}
+              index={index}
+              columns={columns}
+              selected={selectedResources.includes(String(row.id))}
+              previewOpen={previewProductId === row.id}
+              onTogglePreview={() => setPreviewProductId(previewProductId === row.id ? null : row.id)}
+              isEditing={editingId === row.id}
+              editData={editData}
+              onEditDataChange={setEditData}
+              onStartEdit={() => handleStartEdit(row)}
+              onCancelEdit={() => { setEditingId(null); setEditData({}); }}
+              onSaveEdit={handleSaveEdit}
+              isSaving={isSavingEdit}
+              onImageClick={setImagePopup}
+            />
+          ))}
+        </IndexTable>
+
+        {!isLoading && pageRows.length === 0 && (
+          <div style={s.emptyState}>
+            <Text as="p" color="subdued">
+              {products.length === 0 ? "No products found. Try syncing from Shopify." : "No products match the current filters."}
+            </Text>
+          </div>
+        )}
+
+        <div style={s.footer}>
+          <Text as="span" color="subdued">
+            Showing {sortedProducts.length === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1} to{" "}
+            {Math.min(currentPage * PAGE_SIZE, sortedProducts.length)} of {sortedProducts.length} products
+          </Text>
+          <PaginationBar page={currentPage} pageCount={pageCount} onChange={setPage} />
+        </div>
+      </Card>
+
+      <ConfirmSyncModal
+        open={confirmSyncOpen}
+        loading={isSyncing}
+        onCancel={() => setConfirmSyncOpen(false)}
+        onConfirm={() => { setConfirmSyncOpen(false); syncCatalog(); }}
+      />
+      
+      {imagePopup && (
+        <Modal
+          open={!!imagePopup}
+          onClose={() => setImagePopup(null)}
+          title={imagePopup.title}
+        >
+          <Modal.Section>
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
+              <img src={imagePopup.image_url} alt={imagePopup.title} style={{ maxWidth: '100%', maxHeight: '60vh', objectFit: 'contain', borderRadius: '8px' }} />
+            </div>
+          </Modal.Section>
+        </Modal>
+      )}
+    </Page>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Row
+// ---------------------------------------------------------------------------
+
+function ProductRow({ row, index, columns, selected, previewOpen, onTogglePreview, isEditing, editData, onEditDataChange, onStartEdit, onCancelEdit, onSaveEdit, isSaving, onImageClick }) {
+  return (
+    <IndexTable.Row id={String(row.id)} key={row.id} position={index} selected={selected} onClick={isEditing ? undefined : onStartEdit}>
+      {columns.map((col) => (
+        <IndexTable.Cell key={col.key}>
+          {col.key === "image" && (
+            row.image_url ? (
+              <div onClick={(e) => { e.stopPropagation(); onImageClick(row); }} style={{ cursor: 'pointer', display: 'inline-block' }}>
+                <img src={row.image_url} alt={row.title} style={{ width: '40px', height: '40px', objectFit: 'cover', borderRadius: '4px' }} />
+              </div>
+            ) : (
+              <ImagePlaceholder />
+            )
+          )}
+          {col.key === "product" && (
+            <Popover
+              active={previewOpen}
+              onClose={onTogglePreview}
+              activator={
+                <button type="button" style={s.linkReset} onClick={(e) => { e.stopPropagation(); onTogglePreview(); }}>
+                  <Text as="span" fontWeight="medium">{row.title}</Text>
+                </button>
+              }
+            >
+              <ProductPreview row={row} onClose={onTogglePreview} />
+            </Popover>
+          )}
+          {col.key === "variants" && <Text as="span" color="subdued">{row.variants} variant{row.variants !== 1 ? 's' : ''}</Text>}
+          {col.key === "status" && <Badge status={row.status.status}>{row.status.label}</Badge>}
+          {col.key === "sku" && (
+            <Text as="span" color="subdued">{row.sku || "—"}</Text>
+          )}
+          {col.key === "barcode" && <Text as="span" color="subdued">—</Text>}
+          {col.key === "vendor" && (
+            isEditing ? (
+              <div onClick={(e) => e.stopPropagation()}><TextField value={editData.vendor} onChange={(v) => onEditDataChange({...editData, vendor: v})} autoComplete="off" /></div>
+            ) : (
+              <Text as="span" color="subdued">{row.vendor || "—"}</Text>
+            )
+          )}
+          {col.key === "inventory" && <Text as="span">{row.inventory}</Text>}
+          {col.key === "price" && (
+            isEditing ? (
+              <div onClick={(e) => e.stopPropagation()}><TextField type="number" prefix="$" value={editData.price} onChange={(v) => onEditDataChange({...editData, price: v})} autoComplete="off" /></div>
+            ) : (
+              <Text as="span" color="subdued">{row.price ? `$${row.price}` : "—"}</Text>
+            )
+          )}
+        </IndexTable.Cell>
+      ))}
+      <IndexTable.Cell>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
+          <Button icon={ViewMinor} accessibilityLabel="View" onClick={onTogglePreview} />
+          {isEditing ? (
+            <ButtonGroup segmented>
+              <Button onClick={onCancelEdit}>Cancel</Button>
+              <Button primary onClick={onSaveEdit} loading={isSaving}>Save</Button>
+            </ButtonGroup>
+          ) : (
+            <Button onClick={onStartEdit}>Edit</Button>
+          )}
+        </div>
+      </IndexTable.Cell>
+    </IndexTable.Row>
+  );
+}
+
+function ImagePlaceholder() {
+  return (
+    <div style={s.imagePlaceholder}>
+      <Icon source={ImageMajor} color="subdued" />
+    </div>
+  );
+}
+
+function ProductPreview({ row, onClose }) {
+  return (
+    <div style={s.previewCard}>
+      <div style={s.previewHeader}>
+        <div style={s.previewImage}>
+          <Icon source={ImageMajor} color="subdued" />
+        </div>
+        <div style={{ flex: 1 }}>
+          <Text as="h3" variant="headingSm">{row.title}</Text>
+          <Badge status={row.status.status}>{row.status.label}</Badge>
+        </div>
+        <Button plain icon={HorizontalDotsMinor} accessibilityLabel="Close" onClick={onClose} />
+      </div>
+      <div style={s.previewRows}>
+        <PreviewRow label="SKU" value={row.sku || "—"} />
+        <PreviewRow label="Vendor" value={row.vendor || "—"} />
+        <PreviewRow label="Inventory" value={row.inventory} />
+        <PreviewRow label="Barcode" value="—" />
+        <PreviewRow label="Variants" value={`${row.variants || 0} variant${row.variants !== 1 ? 's' : ''}`} />
+      </div>
+      <div style={s.previewActions}>
+        <Tooltip content="Opening products in Shopify admin isn't wired up yet.">
+          <Button plain disabled>View in Shopify</Button>
+        </Tooltip>
+        <Tooltip content="The product editor is coming in a later step.">
+          <Button primary disabled>Edit</Button>
+        </Tooltip>
+      </div>
+    </div>
+  );
+}
+
+function PreviewRow({ label, value }) {
+  return (
+    <div style={s.previewRow}>
+      <Text as="span" color="subdued">{label}</Text>
+      <Text as="span">{value}</Text>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Toolbar pieces
+// ---------------------------------------------------------------------------
+
+function CreateProductButton() {
+  const navigate = useNavigate();
+  return (
+    <Button primary icon={PlusMinor} onClick={() => navigate('/product-create')}>
+      Create product
+    </Button>
+  );
+}
+
+function FilterPopover(props) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover active={open} onClose={() => setOpen(false)} activator={
+      <Button icon={FilterMinor} disclosure onClick={() => setOpen((v) => !v)}>
+        {props.activeFilterCount > 0 ? `Filters (${props.activeFilterCount})` : "Filters"}
+      </Button>
+    }>
+      <div style={{ padding: '16px', minWidth: '250px', maxHeight: '400px', overflowY: 'auto' }}>
+        <Stack vertical spacing="tight">
+          <Select label="Status" placeholder="Select status" options={[
+            { label: "Active", value: "active" },
+            { label: "Draft", value: "draft" },
+            { label: "Archived", value: "archived" },
+          ]} value={props.statusFilter} onChange={props.setStatusFilter} />
+          <Select label="Vendor" placeholder="Select vendor" options={props.vendorOptions} value={props.vendorFilter} onChange={props.setVendorFilter} />
+          <Select label="Inventory" placeholder="Select inventory" options={[
+            {label: 'In Stock', value: 'in-stock'},
+            {label: 'Low Stock (< 10)', value: 'low-stock'},
+            {label: 'Out of Stock', value: 'out-of-stock'},
+          ]} value={props.inventoryFilter} onChange={props.setInventoryFilter} />
+          <Select label="Images" placeholder="Select images" options={[
+            {label: 'Has Images', value: 'has-images'},
+            {label: 'Missing Images', value: 'missing-images'},
+          ]} value={props.imagesFilter} onChange={props.setImagesFilter} />
+          <Select label="SEO" placeholder="Select SEO" options={[
+            {label: 'Missing SEO', value: 'missing-seo'},
+          ]} value={props.seoFilter} onChange={props.setSeoFilter} />
+          <TextField label="Tags" placeholder="Search tags" value={props.tagsFilter} onChange={props.setTagsFilter} autoComplete="off" />
+          <Select label="Updated Date" placeholder="Select date" options={[
+            {label: 'Last 7 days', value: 'last-7-days'},
+            {label: 'Last 30 days', value: 'last-30-days'},
+          ]} value={props.dateFilter} onChange={props.setDateFilter} />
+        </Stack>
+        <div style={{ marginTop: '16px', borderTop: '1px solid #dfe3e8', paddingTop: '16px' }}>
+          <Button plain onClick={() => { props.onClearAll(); setOpen(false); }}>
+            Clear filters
+          </Button>
+        </div>
+      </div>
+    </Popover>
+  );
+}
+
+function SortPopover({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover active={open} onClose={() => setOpen(false)} activator={
+      <Button icon={SortMinor} disclosure onClick={() => setOpen((v) => !v)}>Sort</Button>
+    }>
+      <ActionList
+        items={SORT_OPTIONS.map((opt) => ({
+          content: opt.label,
+          active: opt.value === value,
+          onAction: () => { onChange(opt.value); setOpen(false); },
+        }))}
+      />
+    </Popover>
+  );
+}
+
+function CatalogBulkEditor({ products, columns, onColumnsChange, onSave, isSaving, onDiscard }) {
+  const [draftColumns, setDraftColumns] = useState(columns);
+  const [columnModalOpen, setColumnModalOpen] = useState(false);
+  const [changes, setChanges] = useState(() => Object.fromEntries(products.map((product) => [String(product.id), {
+    title: product.title || "",
+    status: product.status?.label || "active",
+    vendor: product.vendor || "",
+    sku: product.sku || "",
+    price: product.price || "",
+    handle: product.handle || "",
+    meta_title: product.meta_title || "",
+    meta_description: product.meta_description || "",
+  }])));
+
+  const visibleColumns = BULK_EDIT_COLUMNS.filter((column) => draftColumns.includes(column.key));
+  const updateValue = (id, key, value) => {
+    setChanges((current) => ({ ...current, [id]: { ...current[id], [key]: value } }));
+  };
+
+  return (
+    <Page fullWidth>
+      <TitleBar title="Bulk edit products" />
+      <div style={s.bulkWorkspace}>
+        <div style={s.bulkToolbar}>
+          <div style={s.bulkToolbarLeft}>
+            <Button plain icon={ArrowLeftMinor} accessibilityLabel="Back to Catalog" onClick={onDiscard} />
+            <Text variant="bodyMd" fontWeight="semibold">Editing {products.length} products</Text>
+          </div>
+          <div style={s.bulkToolbarRight}>
+            <Button icon={Columns3Minor} onClick={() => { setDraftColumns(columns); setColumnModalOpen(true); }}>Columns</Button>
+            <Button onClick={onDiscard} disabled={isSaving}>Discard</Button>
+            <Button primary onClick={() => onSave(changes)} loading={isSaving}>Save</Button>
+          </div>
+        </div>
+
+        <div style={s.bulkEditorGrid}>
+          <table style={s.bulkProductTable}>
+            <thead><tr><th style={s.bulkHeader}>Product title</th></tr></thead>
+            <tbody>
+              {products.map((product) => (
+                <tr key={product.id}>
+                  <td style={s.bulkCell}>
+                    <div style={s.bulkProductCell}>
+                      {product.image_url ? <img src={product.image_url} alt="" style={s.bulkThumbnail} /> : (
+                        <div style={s.bulkThumbnailPlaceholder}><Icon source={ImageMajor} color="subdued" /></div>
+                      )}
+                      <div><Text fontWeight="medium">{product.title}</Text><Text variant="bodySm" color="subdued">ID: {product.id}</Text></div>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={s.bulkTableScroll}>
+            <table style={s.bulkTable}>
+              <colgroup>{visibleColumns.map((column) => <col key={column.key} style={{ width: 220 }} />)}</colgroup>
+              <thead><tr>{visibleColumns.map((column) => <th key={column.key} style={s.bulkHeader}>{column.label}</th>)}</tr></thead>
+              <tbody>
+                {products.map((product) => (
+                  <tr key={product.id}>
+                    {visibleColumns.map((column) => (
+                      <td key={column.key} style={s.bulkCell}>
+                        {column.type === "select" ? (
+                          <Select label={column.label} labelHidden options={column.options} value={changes[String(product.id)][column.key]} onChange={(value) => updateValue(String(product.id), column.key, value)} />
+                        ) : (
+                          <TextField label={column.label} labelHidden type={column.type === "number" ? "number" : "text"} multiline={column.type === "multiline" ? 2 : undefined} value={changes[String(product.id)][column.key]} onChange={(value) => updateValue(String(product.id), column.key, value)} autoComplete="off" />
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <Modal
+        open={columnModalOpen}
+        onClose={() => setColumnModalOpen(false)}
+        title="Choose columns"
+        primaryAction={{
+          content: "Apply",
+          onAction: () => { onColumnsChange(draftColumns); setColumnModalOpen(false); },
+        }}
+        secondaryActions={[{ content: "Reset", onAction: () => setDraftColumns(["title", "status", "vendor", "price"]) }]}
+      >
+        <Modal.Section>
+          {BULK_EDIT_COLUMNS.map((column) => (
+            <div key={column.key} style={s.columnRow}>
+              <Checkbox
+                label={column.label}
+                checked={draftColumns.includes(column.key)}
+                onChange={(checked) => setDraftColumns((current) => checked
+                  ? [...new Set([...current, column.key])]
+                  : current.filter((key) => key !== column.key))}
+              />
+            </div>
+          ))}
+        </Modal.Section>
+      </Modal>
+    </Page>
+  );
+}
+
+function ColumnsButton({ visibleColumns, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(visibleColumns);
+
+  const openModal = () => { setDraft(new Set(visibleColumns)); setOpen(true); };
+
+  return (
+    <>
+      <Button icon={Columns3Minor} onClick={openModal}>Columns</Button>
+      <Modal open={open} onClose={() => setOpen(false)} title="Manage columns" primaryAction={{
+        content: "Save",
+        onAction: () => { onChange(draft); setOpen(false); },
+      }} secondaryActions={[{
+        content: "Reset",
+        onAction: () => setDraft(new Set(ALL_COLUMNS.map((c) => c.key))),
+      }]}>
+        <Modal.Section>
+          {ALL_COLUMNS.map((col) => (
+            <div key={col.key} style={s.columnRow}>
+              <Checkbox
+                label={col.label}
+                checked={draft.has(col.key)}
+                disabled={col.locked}
+                onChange={(checked) => {
+                  const next = new Set(draft);
+                  checked ? next.add(col.key) : next.delete(col.key);
+                  setDraft(next);
+                }}
+              />
+            </div>
+          ))}
+        </Modal.Section>
+      </Modal>
+    </>
+  );
+}
+
+function BulkEditPopover({ disabled, count, onSelect }) {
+  return (
+    <Button icon={SelectMinor} disabled={disabled} onClick={onSelect}>
+      Bulk edit
+    </Button>
+  );
+}
+
+function PriceButton({ disabled, count }) {
+  const [open, setOpen] = useState(false);
+  const [type, setType] = useState("percentage");
+  const [value, setValue] = useState("10");
+  const [round, setRound] = useState("2");
+
+  return (
+    <>
+      <Button icon={CashDollarMinor} disabled={disabled} onClick={() => setOpen(true)}>Price</Button>
+      <Modal open={open} onClose={() => setOpen(false)} title="Adjust prices" primaryAction={{
+        content: "Apply", onAction: () => setOpen(false),
+      }} secondaryActions={[{ content: "Cancel", onAction: () => setOpen(false) }]}>
+        <Modal.Section>
+          <Select label="Adjustment type" value={type} onChange={setType} options={[
+            { label: "Percentage", value: "percentage" },
+            { label: "Fixed amount", value: "fixed" },
+          ]} />
+          <div style={{ marginTop: 12 }}>
+            <TextField label="Value" type="number" value={value} onChange={setValue} suffix={type === "percentage" ? "%" : "USD"} autoComplete="off" />
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <Select label="Round to" value={round} onChange={setRound} options={[
+              { label: "No rounding", value: "0" },
+              { label: "2 decimals", value: "2" },
+              { label: "Nearest .99", value: "99" },
+            ]} />
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <Text as="span" color="subdued">Preview: {count} product(s) selected</Text>
+          </div>
+        </Modal.Section>
+      </Modal>
+    </>
+  );
+}
+
+function ConfirmSyncModal({ open, loading, onCancel, onConfirm }) {
+  return (
+    <Modal
+      open={open}
+      onClose={onCancel}
+      title="Sync catalog now?"
+      primaryAction={{ content: "Sync now", onAction: onConfirm, loading }}
+      secondaryActions={[{ content: "Cancel", onAction: onCancel }]}
+    >
+      <Modal.Section>
+        <Text as="p">This will sync your catalog and inventory with the latest data from Shopify.</Text>
+      </Modal.Section>
+    </Modal>
+  );
+}
+
+function PaginationBar({ page, pageCount, onChange }) {
+  const pages = paginationWindow(page, pageCount);
+  return (
+    <div style={s.pagination}>
+      <Button onClick={() => onChange(page - 1)} disabled={page <= 1} accessibilityLabel="Previous page">‹</Button>
+      {pages.map((p, i) => p === "…" ? (
+        <span key={`ellipsis-${i}`} style={s.pageEllipsis}>…</span>
+      ) : (
+        <button
+          key={p}
+          type="button"
+          onClick={() => onChange(p)}
+          style={{ ...s.pageButton, ...(p === page ? s.pageButtonActive : {}) }}
+        >
+          {p}
+        </button>
+      ))}
+      <Button onClick={() => onChange(page + 1)} disabled={page >= pageCount} accessibilityLabel="Next page">›</Button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function sortProducts(products, sortValue) {
+  const sorted = [...products];
+  if (sortValue === "title-asc") sorted.sort((a, b) => a.title.localeCompare(b.title));
+  if (sortValue === "title-desc") sorted.sort((a, b) => b.title.localeCompare(a.title));
+  // price-* and created-* are left as-is: this endpoint doesn't return price
+  // or created_at yet, so there's nothing to sort by for those options.
+  return sorted;
+}
+
+function paginationWindow(page, pageCount) {
+  if (pageCount <= 6) return Array.from({ length: pageCount }, (_, i) => i + 1);
+  const pages = [1, 2, 3, 4, 5];
+  if (page > 5 && page < pageCount) pages.splice(4, 1, page);
+  pages.push("…", pageCount);
+  return Array.from(new Set(pages));
+}
+
+async function readApiResponse(response) {
+  const contentType = response.headers.get("content-type") || "";
+  const body = await response.text();
+
+  if (!contentType.includes("application/json")) {
+    throw new Error(
+      response.status === 401
+        ? "Your Shopify session expired. Reopen the app to reconnect."
+        : `The server returned an unexpected response (${response.status}). Please restart the app server and try again.`,
+    );
+  }
+
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw new Error("The server returned invalid JSON. Please try again.");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Styles
+// ---------------------------------------------------------------------------
+
+const s = {
+  bulkWorkspace: {
+    width: "100%",
+    background: "#fff",
+    borderTop: "1px solid #dfe3e8",
+    height: "calc(100vh - 112px)",
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "column",
+    isolation: "isolate",
+  },
+  bulkToolbar: {
+    minHeight: 64,
+    padding: "0 16px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 16,
+    borderBottom: "1px solid #dfe3e8",
+    flexWrap: "wrap",
+  },
+  bulkToolbarLeft: { display: "flex", alignItems: "center", gap: 8 },
+  bulkToolbarRight: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  bulkEditorGrid: { display: "grid", gridTemplateColumns: "360px minmax(0, 1fr)", alignItems: "start", flex: 1, minHeight: 0, overflow: "hidden" },
+  bulkTableScroll: { overflow: "auto", minWidth: 0, minHeight: 0 },
+  bulkProductTable: { width: "360px", height: "max-content", borderCollapse: "collapse", tableLayout: "fixed" },
+  bulkTable: { width: "100%", minWidth: 900, height: "max-content", borderCollapse: "collapse", tableLayout: "fixed" },
+  bulkStickyHeader: {
+    position: "sticky",
+    left: 0,
+    zIndex: 5,
+    width: 360,
+    minWidth: 360,
+    maxWidth: 360,
+    background: "#fafbfb",
+    boxShadow: "1px 0 0 #dfe3e8",
+  },
+  bulkStickyCell: {
+    position: "sticky",
+    left: 0,
+    zIndex: 4,
+    width: 360,
+    minWidth: 360,
+    maxWidth: 360,
+    background: "#fff",
+    boxShadow: "1px 0 0 #f1f2f4",
+    overflow: "hidden",
+    boxSizing: "border-box",
+  },
+  bulkProductCell: { display: "flex", alignItems: "center", gap: 10 },
+  bulkThumbnail: {
+    width: 36,
+    height: 36,
+    objectFit: "cover",
+    borderRadius: 4,
+    border: "1px solid #dfe3e8",
+    flexShrink: 0,
+  },
+  bulkThumbnailPlaceholder: {
+    width: 36,
+    height: 36,
+    borderRadius: 4,
+    border: "1px solid #dfe3e8",
+    background: "#f6f6f7",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  header: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: 12,
+    marginBottom: 16,
+  },
+  searchRow: { maxWidth: 420, marginBottom: 12 },
+  toolbar: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 },
+  card: {
+    background: "var(--p-surface, #fff)",
+    border: "1px solid #e1e3e5",
+    borderRadius: 8,
+    overflow: "hidden",
+  },
+  emptyState: { padding: "32px 20px", textAlign: "center" },
+  footer: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "12px 16px",
+    borderTop: "1px solid #e1e3e5",
+    flexWrap: "wrap",
+    gap: 12,
+  },
+  pagination: { display: "flex", alignItems: "center", gap: 4 },
+  pageButton: {
+    minWidth: 32,
+    height: 32,
+    padding: "0 6px",
+    border: "1px solid #e1e3e5",
+    borderRadius: 6,
+    background: "#fff",
+    cursor: "pointer",
+    fontSize: 13,
+  },
+  pageButtonActive: {
+    background: "#2c6ecb",
+    borderColor: "#2c6ecb",
+    color: "#fff",
+    fontWeight: 600,
+  },
+  pageEllipsis: { padding: "0 4px", color: "#6d7175" },
+  imagePlaceholder: {
+    width: 40,
+    height: 40,
+    borderRadius: 6,
+    background: "#f1f2f4",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  linkReset: { background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" },
+  popoverPanel: { padding: 16, width: 260 },
+  popoverFooter: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16 },
+  columnRow: { padding: "6px 0" },
+  bulkHeader: {
+    padding: "10px 12px",
+    textAlign: "left",
+    background: "#fafbfb",
+    borderBottom: "1px solid #dfe3e8",
+    whiteSpace: "nowrap",
+    fontSize: 13,
+    fontWeight: 500,
+    color: "#42474c",
+  },
+  bulkCell: {
+    padding: "5px 8px",
+    minWidth: 180,
+    verticalAlign: "top",
+    borderBottom: "1px solid #f1f2f4",
+    height: 48,
+  },
+  previewCard: { width: 300, padding: 16 },
+  previewHeader: { display: "flex", gap: 12, alignItems: "flex-start", marginBottom: 12 },
+  previewImage: {
+    width: 48,
+    height: 48,
+    borderRadius: 6,
+    background: "#f1f2f4",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  previewRows: { borderTop: "1px solid #f1f2f4", paddingTop: 8 },
+  previewRow: { display: "flex", justifyContent: "space-between", padding: "6px 0" },
+  previewActions: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 },
+};

@@ -1,0 +1,3 @@
+import { Button, Card, Layout, Page, Stack, Text } from "@shopify/polaris";
+import { TitleBar } from "@shopify/app-bridge-react";
+export default function Collections() { return <Page fullWidth><TitleBar title="Collection manager" primaryAction={{ content: "Assign products", onAction: () => {} }} /><Layout><Layout.Section><div style={{ marginTop: 20 }}><Card title="Manual collections" sectioned><Stack vertical><Text as="p">Preview product membership before applying changes to Shopify.</Text><Button primary>Preview assignments</Button></Stack></Card><Card title="Smart collections" sectioned><Text as="p" color="subdued">Smart collections are read-only here and cannot receive manual assignments.</Text></Card></div></Layout.Section></Layout></Page>; }
