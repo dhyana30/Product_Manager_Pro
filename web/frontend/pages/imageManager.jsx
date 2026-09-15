@@ -20,7 +20,7 @@ import {
   Modal,
   Filters
 } from '@shopify/polaris';
-import { SearchMinor, FilterMinor, SortMinor, DeleteMinor, EditMinor, ArrowLeftMinor } from '@shopify/polaris-icons';
+import { ViewMinor, SearchMinor, FilterMinor, SortMinor, DeleteMinor, EditMinor, ArrowLeftMinor } from '@shopify/polaris-icons';
 import { TitleBar } from '@shopify/app-bridge-react';
 import { PaginationBar, FileSelectorModal } from "../components";
 import { useAuthenticatedFetch } from "../hooks/useAuthenticatedFetch";
@@ -404,6 +404,7 @@ function ImageManagerContent() {
           </IndexTable.Cell>
           <IndexTable.Cell>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
+              <Button icon={ViewMinor} accessibilityLabel="View" onClick={() => {}} />
               <Button size="slim" onClick={() => setImagePopup({ image_url, title })}>Edit</Button>
             </div>
           </IndexTable.Cell>

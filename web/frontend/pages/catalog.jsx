@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ActionList,
@@ -35,7 +35,7 @@ import {
   SearchMinor,
   SelectMinor,
   SortMinor,
-  ViewMinor,
+  ViewMinor, ChevronUpMinor, ChevronDownMinor,
 } from "@shopify/polaris-icons";
 import { TitleBar, Toast } from "@shopify/app-bridge-react";
 import { useAuthenticatedFetch } from "../hooks/useAuthenticatedFetch";
@@ -49,14 +49,14 @@ import { useAuthenticatedFetch } from "../hooks/useAuthenticatedFetch";
 const PAGE_SIZE = 20;
 
 const ALL_COLUMNS = [
-  { key: "image", label: "Image" },
   { key: "product", label: "Product", locked: true },
   { key: "variants", label: "Variants" },
   { key: "status", label: "Status" },
-  { key: "sku", label: "SKU" },
-  { key: "barcode", label: "Barcode" },
+  { key: "vendor", label: "Vendor" },
   { key: "inventory", label: "Inventory" },
+  { key: "sku", label: "SKU" },
   { key: "price", label: "Price" },
+  { key: "published_at", label: "Publish Date" },
 ];
 
 const BULK_EDIT_COLUMNS = [
@@ -158,8 +158,7 @@ export default function Catalog() {
   const [tagsFilter, setTagsFilter] = useState("");
   const [dateFilter, setDateFilter] = useState("");
   const [sortValue, setSortValue] = useState("title-asc");
-  const [visibleColumns, setVisibleColumns] = useState(() => new Set(ALL_COLUMNS.map((c) => c.key)));
-  const [page, setPage] = useState(1);
+    const [page, setPage] = useState(1);
   const [previewProductId, setPreviewProductId] = useState(null);
   const [imagePopup, setImagePopup] = useState(null);
 
@@ -167,6 +166,7 @@ export default function Catalog() {
   const [editData, setEditData] = useState({});
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [bulkEditorOpen, setBulkEditorOpen] = useState(false);
+  const [viewProduct, setViewProduct] = useState(null);
   const [bulkEditorColumns, setBulkEditorColumns] = useState(["title", "status", "vendor", "price"]);
   const [isSavingBulk, setIsSavingBulk] = useState(false);
 
@@ -234,11 +234,13 @@ export default function Catalog() {
     resourceIDResolver: (resource) => String(resource.id),
   });
 
-  const columns = ALL_COLUMNS.filter((c) => visibleColumns.has(c.key));
-
+  
   const handleStartEdit = (row) => {
     setEditingId(row.id);
     setEditData({ title: row.title, vendor: row.vendor, price: row.price, sku: row.sku });
+  };
+  const handleCancelEdit = () => {
+    setEditingId(null);
   };
 
   const handleSaveEdit = async () => {
@@ -417,8 +419,7 @@ export default function Catalog() {
                 }}
               />
               <SortPopover value={sortValue} onChange={setSortValue} />
-              <ColumnsButton visibleColumns={visibleColumns} onChange={setVisibleColumns} />
-              <BulkEditPopover
+                            <BulkEditPopover
                 disabled={selectedResources.length === 0}
                 count={selectedResources.length}
                 onSelect={() => setBulkEditorOpen(true)}
@@ -432,27 +433,25 @@ export default function Catalog() {
           itemCount={pageRows.length}
           selectedItemsCount={allResourcesSelected ? "All" : selectedResources.length}
           onSelectionChange={handleSelectionChange}
-          headings={[...columns.map((c) => ({ title: c.label })), { title: "" }]}
+          headings={[...ALL_COLUMNS.map((c) => ({ title: c.label })), { title: "" }]}
           loading={isLoading}
         >
           {pageRows.map((row, index) => (
             <ProductRow
-              key={row.id}
-              row={row}
-              index={index}
-              columns={columns}
-              selected={selectedResources.includes(String(row.id))}
-              previewOpen={previewProductId === row.id}
-              onTogglePreview={() => setPreviewProductId(previewProductId === row.id ? null : row.id)}
-              isEditing={editingId === row.id}
-              editData={editData}
-              onEditDataChange={setEditData}
-              onStartEdit={() => handleStartEdit(row)}
-              onCancelEdit={() => { setEditingId(null); setEditData({}); }}
-              onSaveEdit={handleSaveEdit}
-              isSaving={isSavingEdit}
-              onImageClick={setImagePopup}
-            />
+                  key={row.id}
+                  row={row}
+                  index={index}
+                  columns={ALL_COLUMNS}
+                  selected={selectedResources.includes(String(row.id))}
+                  isEditing={editingId === row.id}
+                  editData={editData}
+                  onEditDataChange={setEditData}
+                  onStartEdit={() => handleStartEdit(row)}
+                  onCancelEdit={handleCancelEdit}
+                  onSaveEdit={handleSaveEdit}
+                  isSaving={isSavingEdit && editingId === row.id}
+                  onViewProduct={(r) => setViewProduct(r)}
+                />
           ))}
         </IndexTable>
 
@@ -493,6 +492,103 @@ export default function Catalog() {
           </Modal.Section>
         </Modal>
       )}
+    
+      {viewProduct && (
+        <Modal
+          open={!!viewProduct}
+          onClose={() => setViewProduct(null)}
+          title="Product details"
+          large
+        >
+          <Modal.Section>
+            <div style={{ display: 'flex', gap: '24px', marginBottom: '32px' }}>
+              <div style={{ width: '120px', height: '120px', flexShrink: 0, border: '1px solid #e1e3e5', borderRadius: '8px', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f4f6f8' }}>
+                {viewProduct.image_url ? (
+                  <img src={viewProduct.image_url} alt={viewProduct.title} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                ) : (
+                  <Icon source={ImageMajor} color="subdued" />
+                )}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                  <Text variant="headingLg" as="h2">{viewProduct.title}</Text>
+                  <Badge status={viewProduct.status?.status || 'success'}>{viewProduct.status?.label || viewProduct.status}</Badge>
+                </div>
+                <Text color="subdued" as="p" variant="bodyMd">/{viewProduct.handle || '—'}</Text>
+                
+                <div style={{ display: 'flex', gap: '32px', marginTop: '24px' }}>
+                  <div>
+                    <Text color="subdued" as="p">Price</Text>
+                    <Text fontWeight="medium" as="p">{viewProduct.price ? '$'+viewProduct.price : '—'}</Text>
+                  </div>
+                  <div>
+                    <Text color="subdued" as="p">Inventory</Text>
+                    <Text fontWeight="medium" as="p">{viewProduct.inventory ?? '—'}</Text>
+                  </div>
+                  <div>
+                    <Text color="subdued" as="p">Vendor</Text>
+                    <Text fontWeight="medium" as="p">{viewProduct.vendor || '—'}</Text>
+                  </div>
+                  <div>
+                    <Text color="subdued" as="p">Product type</Text>
+                    <Text fontWeight="medium" as="p">{viewProduct.product_type || '—'}</Text>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '32px' }}>
+              <Text variant="headingMd" as="h3">SEO details</Text>
+              <div style={{ display: 'flex', gap: '32px', marginTop: '16px' }}>
+                <div style={{ flex: 1 }}>
+                  <Text color="subdued" as="p">Meta title</Text>
+                  <Text fontWeight="medium" as="p">{viewProduct.meta_title || '—'}</Text>
+                </div>
+                <div style={{ flex: 2 }}>
+                  <Text color="subdued" as="p">Meta description</Text>
+                  <Text fontWeight="medium" as="p">{viewProduct.meta_description || '—'}</Text>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div style={{ marginBottom: '16px' }}>
+                <Text variant="headingMd" as="h3">Variants ({viewProduct.variants_list?.length || 0})</Text>
+              </div>
+              <Card padding="0">
+                <IndexTable
+                  resourceName={{ singular: 'variant', plural: 'variants' }}
+                  itemCount={(viewProduct.variants_list || []).length}
+                  headings={[
+                    { title: 'Variant' },
+                    { title: 'SKU' },
+                    { title: 'Price' },
+                    { title: 'Inventory' },
+                  ]}
+                  selectable={false}
+                >
+                  {(viewProduct.variants_list || []).map((v, i) => (
+                    <IndexTable.Row id={i.toString()} key={i} position={i}>
+                      <IndexTable.Cell>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <div style={{ width: '32px', height: '32px', border: '1px solid #e1e3e5', borderRadius: '4px', overflow: 'hidden', flexShrink: 0, backgroundColor: '#f4f6f8' }}>
+                            {viewProduct.image_url ? <img src={viewProduct.image_url} alt="" style={{width: '100%', height:'100%', objectFit: 'contain'}} /> : <Icon source={ImageMajor} color="subdued" />}
+                          </div>
+                          <Text variant="bodyMd" fontWeight="medium" as="span">{v.title || 'Default Title'}</Text>
+                        </div>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell><Text as="span" color="subdued">{v.sku || '—'}</Text></IndexTable.Cell>
+                      <IndexTable.Cell><Text as="span" color="subdued">{v.price ? '$'+v.price : '—'}</Text></IndexTable.Cell>
+                      <IndexTable.Cell><Text as="span" color="subdued">{v.inventory ?? '—'}</Text></IndexTable.Cell>
+                    </IndexTable.Row>
+                  ))}
+                </IndexTable>
+              </Card>
+            </div>
+          </Modal.Section>
+
+        </Modal>
+      )}
     </Page>
   );
 }
@@ -501,73 +597,68 @@ export default function Catalog() {
 // Row
 // ---------------------------------------------------------------------------
 
-function ProductRow({ row, index, columns, selected, previewOpen, onTogglePreview, isEditing, editData, onEditDataChange, onStartEdit, onCancelEdit, onSaveEdit, isSaving, onImageClick }) {
+function ProductRow({ row, index, columns, selected, isEditing, editData, onEditDataChange, onStartEdit, onCancelEdit, onSaveEdit, isSaving, onViewProduct }) {
   return (
     <IndexTable.Row id={String(row.id)} key={row.id} position={index} selected={selected} onClick={isEditing ? undefined : onStartEdit}>
       {columns.map((col) => (
         <IndexTable.Cell key={col.key}>
-          {col.key === "image" && (
-            row.image_url ? (
-              <div onClick={(e) => { e.stopPropagation(); onImageClick(row); }} style={{ cursor: 'pointer', display: 'inline-block' }}>
-                <img src={row.image_url} alt={row.title} style={{ width: '40px', height: '40px', objectFit: 'cover', borderRadius: '4px' }} />
-              </div>
-            ) : (
-              <ImagePlaceholder />
-            )
-          )}
           {col.key === "product" && (
-            <Popover
-              active={previewOpen}
-              onClose={onTogglePreview}
-              activator={
-                <button type="button" style={s.linkReset} onClick={(e) => { e.stopPropagation(); onTogglePreview(); }}>
-                  <Text as="span" fontWeight="medium">{row.title}</Text>
-                </button>
-              }
-            >
-              <ProductPreview row={row} onClose={onTogglePreview} />
-            </Popover>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ width: '40px', height: '40px', border: '1px solid #e1e3e5', borderRadius: '4px', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f4f6f8' }}>
+                {row.image_url ? (
+                  <img src={row.image_url} alt={row.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <Icon source={ImageMajor} color="subdued" />
+                )}
+              </div>
+              <div style={{ minWidth: '150px', display: 'flex', flexDirection: 'column' }}>
+                {isEditing ? (
+                  <div onClick={(e) => e.stopPropagation()}><TextField value={editData.title} onChange={(v) => onEditDataChange({...editData, title: v})} autoComplete="off" /></div>
+                ) : (
+                  <Text variant="bodyMd" fontWeight="bold" as="span">{row.title}</Text>
+                )}
+              </div>
+            </div>
           )}
-          {col.key === "variants" && <Text as="span" color="subdued">{row.variants} variant{row.variants !== 1 ? 's' : ''}</Text>}
-          {col.key === "status" && <Badge status={row.status.status}>{row.status.label}</Badge>}
+          {col.key === "variants" && <Text as="span" color="subdued">{row.variants || "—"}</Text>}
+          {col.key === "status" && (
+            <Badge status={row.status?.status || 'success'}>{row.status?.label || row.status}</Badge>
+          )}
+          {col.key === "vendor" && <Text as="span" color="subdued">{row.vendor || "—"}</Text>}
+          {col.key === "inventory" && <Text as="span" color="subdued">{row.inventory ?? "—"}</Text>}
           {col.key === "sku" && (
-            <Text as="span" color="subdued">{row.sku || "—"}</Text>
-          )}
-          {col.key === "barcode" && <Text as="span" color="subdued">—</Text>}
-          {col.key === "vendor" && (
             isEditing ? (
-              <div onClick={(e) => e.stopPropagation()}><TextField value={editData.vendor} onChange={(v) => onEditDataChange({...editData, vendor: v})} autoComplete="off" /></div>
+              <div onClick={(e) => e.stopPropagation()} style={{ minWidth: '120px' }}><TextField value={editData.sku} onChange={(v) => onEditDataChange({...editData, sku: v})} autoComplete="off" /></div>
             ) : (
-              <Text as="span" color="subdued">{row.vendor || "—"}</Text>
+              <Text as="span" color="subdued">{row.sku || "—"}</Text>
             )
           )}
-          {col.key === "inventory" && <Text as="span">{row.inventory}</Text>}
           {col.key === "price" && (
             isEditing ? (
-              <div onClick={(e) => e.stopPropagation()}><TextField type="number" prefix="$" value={editData.price} onChange={(v) => onEditDataChange({...editData, price: v})} autoComplete="off" /></div>
+              <div onClick={(e) => e.stopPropagation()} style={{ minWidth: '100px' }}><TextField type="number" prefix="$" value={editData.price} onChange={(v) => onEditDataChange({...editData, price: v})} autoComplete="off" /></div>
             ) : (
-              <Text as="span" color="subdued">{row.price ? `$${row.price}` : "—"}</Text>
+              <Text as="span" color="subdued">{row.price ? '$'+row.price : "—"}</Text>
             )
           )}
+          {col.key === "published_at" && <Text as="span" color="subdued">{row.published_at || "—"}</Text>}
         </IndexTable.Cell>
       ))}
       <IndexTable.Cell>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
-          <Button icon={ViewMinor} accessibilityLabel="View" onClick={onTogglePreview} />
+          <Button icon={ViewMinor} accessibilityLabel="View" onClick={() => onViewProduct(row)} />
           {isEditing ? (
             <ButtonGroup segmented>
               <Button onClick={onCancelEdit}>Cancel</Button>
               <Button primary onClick={onSaveEdit} loading={isSaving}>Save</Button>
             </ButtonGroup>
           ) : (
-            <Button onClick={onStartEdit}>Edit</Button>
+            <Button size="slim" onClick={onStartEdit}>Edit</Button>
           )}
         </div>
       </IndexTable.Cell>
     </IndexTable.Row>
   );
 }
-
 function ImagePlaceholder() {
   return (
     <div style={s.imagePlaceholder}>
@@ -692,111 +783,570 @@ function SortPopover({ value, onChange }) {
   );
 }
 
-function CatalogBulkEditor({ products, columns, onColumnsChange, onSave, isSaving, onDiscard }) {
-  const [draftColumns, setDraftColumns] = useState(columns);
-  const [columnModalOpen, setColumnModalOpen] = useState(false);
-  const [changes, setChanges] = useState(() => Object.fromEntries(products.map((product) => [String(product.id), {
-    title: product.title || "",
-    status: product.status?.label || "active",
-    vendor: product.vendor || "",
-    sku: product.sku || "",
-    price: product.price || "",
-    handle: product.handle || "",
-    meta_title: product.meta_title || "",
-    meta_description: product.meta_description || "",
-  }])));
 
-  const visibleColumns = BULK_EDIT_COLUMNS.filter((column) => draftColumns.includes(column.key));
-  const updateValue = (id, key, value) => {
-    setChanges((current) => ({ ...current, [id]: { ...current[id], [key]: value } }));
+
+function BulkSalesChannels({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const channels = value ? value.split(',').map(s => s.trim()).filter(Boolean) : [];
+  
+  const options = [
+    "Online Store",
+    "Point of Sale",
+    "Moshocart - Mobile App Builder",
+    "Superfans (prev. Vajro)",
+    "Evlop - Mobile app",
+    "Mobile App Builder",
+    "Shopify GraphiQL App"
+  ];
+
+  const toggle = (opt) => {
+    if (channels.includes(opt)) {
+      onChange(channels.filter(c => c !== opt).join(', '));
+    } else {
+      onChange([...channels, opt].join(', '));
+    }
   };
 
   return (
-    <Page fullWidth>
-      <TitleBar title="Bulk edit products" />
-      <div style={s.bulkWorkspace}>
-        <div style={s.bulkToolbar}>
-          <div style={s.bulkToolbarLeft}>
-            <Button plain icon={ArrowLeftMinor} accessibilityLabel="Back to Catalog" onClick={onDiscard} />
-            <Text variant="bodyMd" fontWeight="semibold">Editing {products.length} products</Text>
+    <div style={{ width: '100%', height: '100%', padding: '4px 8px', position: 'relative', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px', cursor: 'pointer' }} onClick={() => setOpen(true)}>
+      {channels.length === 0 ? <span style={{ color: '#8c9196' }}>—</span> : channels.map(c => (
+        <span key={c} style={{ background: '#e4e5e7', padding: '2px 8px', borderRadius: '12px', fontSize: '12px', color: '#202223', whiteSpace: 'nowrap' }}>
+          {c.length > 15 ? c.substring(0, 15) + '...' : c}
+        </span>
+      ))}
+      
+      {open && (
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={(e) => { e.stopPropagation(); setOpen(false); }} />
+          <div style={{ position: 'absolute', top: '100%', left: 0, background: '#fff', border: '1px solid #dfe3e8', borderRadius: '8px', boxShadow: '0 5px 15px rgba(0,0,0,0.1)', zIndex: 50, minWidth: '220px', padding: '8px 0', marginTop: '4px' }} onClick={e => e.stopPropagation()}>
+            {options.map(opt => (
+              <label key={opt} style={{ display: 'flex', alignItems: 'center', padding: '6px 12px', cursor: 'pointer', fontSize: '13px', color: '#202223' }}>
+                <input type="checkbox" checked={channels.includes(opt)} onChange={() => toggle(opt)} style={{ marginRight: '8px', accentColor: '#008060' }} />
+                {opt}
+              </label>
+            ))}
           </div>
-          <div style={s.bulkToolbarRight}>
-            <Button icon={Columns3Minor} onClick={() => { setDraftColumns(columns); setColumnModalOpen(true); }}>Columns</Button>
-            <Button onClick={onDiscard} disabled={isSaving}>Discard</Button>
-            <Button primary onClick={() => onSave(changes)} loading={isSaving}>Save</Button>
-          </div>
-        </div>
-
-        <div style={s.bulkEditorGrid}>
-          <table style={s.bulkProductTable}>
-            <thead><tr><th style={s.bulkHeader}>Product title</th></tr></thead>
-            <tbody>
-              {products.map((product) => (
-                <tr key={product.id}>
-                  <td style={s.bulkCell}>
-                    <div style={s.bulkProductCell}>
-                      {product.image_url ? <img src={product.image_url} alt="" style={s.bulkThumbnail} /> : (
-                        <div style={s.bulkThumbnailPlaceholder}><Icon source={ImageMajor} color="subdued" /></div>
-                      )}
-                      <div><Text fontWeight="medium">{product.title}</Text><Text variant="bodySm" color="subdued">ID: {product.id}</Text></div>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div style={s.bulkTableScroll}>
-            <table style={s.bulkTable}>
-              <colgroup>{visibleColumns.map((column) => <col key={column.key} style={{ width: 220 }} />)}</colgroup>
-              <thead><tr>{visibleColumns.map((column) => <th key={column.key} style={s.bulkHeader}>{column.label}</th>)}</tr></thead>
-              <tbody>
-                {products.map((product) => (
-                  <tr key={product.id}>
-                    {visibleColumns.map((column) => (
-                      <td key={column.key} style={s.bulkCell}>
-                        {column.type === "select" ? (
-                          <Select label={column.label} labelHidden options={column.options} value={changes[String(product.id)][column.key]} onChange={(value) => updateValue(String(product.id), column.key, value)} />
-                        ) : (
-                          <TextField label={column.label} labelHidden type={column.type === "number" ? "number" : "text"} multiline={column.type === "multiline" ? 2 : undefined} value={changes[String(product.id)][column.key]} onChange={(value) => updateValue(String(product.id), column.key, value)} autoComplete="off" />
-                        )}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <Modal
-        open={columnModalOpen}
-        onClose={() => setColumnModalOpen(false)}
-        title="Choose columns"
-        primaryAction={{
-          content: "Apply",
-          onAction: () => { onColumnsChange(draftColumns); setColumnModalOpen(false); },
-        }}
-        secondaryActions={[{ content: "Reset", onAction: () => setDraftColumns(["title", "status", "vendor", "price"]) }]}
-      >
-        <Modal.Section>
-          {BULK_EDIT_COLUMNS.map((column) => (
-            <div key={column.key} style={s.columnRow}>
-              <Checkbox
-                label={column.label}
-                checked={draftColumns.includes(column.key)}
-                onChange={(checked) => setDraftColumns((current) => checked
-                  ? [...new Set([...current, column.key])]
-                  : current.filter((key) => key !== column.key))}
-              />
-            </div>
-          ))}
-        </Modal.Section>
-      </Modal>
-    </Page>
+        </>
+      )}
+    </div>
   );
 }
 
+function BulkCheckbox({ value, onChange }) {
+  const isChecked = value === true || value === 'true' || value === 'yes';
+  return (
+    <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <input 
+        type="checkbox" 
+        checked={isChecked} 
+        onChange={(e) => onChange(e.target.checked ? 'true' : 'false')}
+        style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#008060' }}
+      />
+    </div>
+  );
+}
+
+function BulkInput({ value, onChange, type = "text", align = "left", prefix, suffix }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', width: '100%', height: '100%', padding: '0 12px' }}>
+      {prefix && <span style={{ color: '#8c9196', marginRight: '4px', fontSize: '14px' }}>{prefix}</span>}
+      <input
+        type={type}
+        value={value || ''}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          width: '100%',
+          border: 'none',
+          outline: 'none',
+          background: 'transparent',
+          textAlign: align,
+          fontSize: '14px',
+          fontFamily: 'inherit',
+          padding: '10px 0',
+          color: '#202223'
+        }}
+      />
+      {suffix && <span style={{ color: '#8c9196', marginLeft: '4px', fontSize: '14px' }}>{suffix}</span>}
+    </div>
+  );
+}
+
+function BulkTags({ value, onChange }) {
+  const [editing, setEditing] = useState(false);
+  
+  if (editing) {
+    return (
+      <div style={{ padding: '0 12px', height: '100%', display: 'flex', alignItems: 'center' }}>
+        <input 
+          autoFocus
+          onBlur={() => setEditing(false)}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          style={{ width: '100%', border: '2px solid #2c6ecb', borderRadius: '4px', outline: 'none', padding: '6px', fontSize: '13px' }}
+        />
+      </div>
+    );
+  }
+
+  const tags = (value || '').split(',').map(s => s.trim()).filter(Boolean);
+  
+  return (
+    <div 
+      onClick={() => setEditing(true)}
+      style={{ padding: '0 12px', height: '100%', minHeight: '44px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px', cursor: 'text' }}
+    >
+      {tags.length === 0 ? (
+        <span style={{ color: '#8c9196' }}>—</span>
+      ) : (
+        tags.map((t, i) => (
+          <span key={i} style={{ background: '#e4e5e7', padding: '2px 8px', borderRadius: '12px', fontSize: '12px' }}>
+            {t}
+          </span>
+        ))
+      )}
+    </div>
+  );
+}
+
+function BulkSelect({ value, onChange, options }) {
+  const getBg = (v) => {
+    const val = String(v).toLowerCase();
+    if (val === 'active') return '#aee9d1';
+    if (val === 'draft') return '#b4e1fa';
+    if (val === 'archived') return '#e4e5e7';
+    return 'transparent';
+  };
+  return (
+    <div style={{ width: '100%', height: '100%', padding: '0 12px', display: 'flex', alignItems: 'center' }}>
+      <select
+        value={value || ''}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          width: '100%',
+          border: 'none',
+          outline: 'none',
+          background: getBg(value),
+          borderRadius: '12px',
+          padding: '4px 8px',
+          fontSize: '13px',
+          fontFamily: 'inherit',
+          cursor: 'pointer',
+          color: '#202223'
+        }}
+      >
+        <option value="" disabled>—</option>
+        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </div>
+  );
+}
+
+
+const BULK_COLUMN_GROUPS = [
+  {
+    title: "General",
+    columns: [
+      { key: "title", label: "Product title", disabled: true },
+      { key: "description", label: "Description" },
+      { key: "media", label: "Product media" },
+      { key: "tags", label: "Tags" },
+      { key: "status", label: "Status" },
+      { key: "product_category", label: "Product category" }, // user screenshot uses "Product category"
+      { key: "product_type", label: "Product type" },
+      { key: "vendor", label: "Vendor" },
+      { key: "template", label: "Template" },
+    ]
+  },
+  {
+    title: "Pricing",
+    columns: [
+      { key: "price", label: "Base price" },
+      { key: "unit_price", label: "Unit price" },
+      { key: "compare_at_price", label: "Compare-at price" },
+      { key: "cost_per_item", label: "Cost per item" },
+      { key: "charge_taxes", label: "Charge taxes" },
+    ]
+  },
+  {
+    title: "Publishing",
+    columns: [
+      { key: "sales_channels", label: "Sales channels" },
+      { key: "online_store_scheduled", label: "Online store schedule" },
+      { key: "online_store_publish_date", label: "Publish date" },
+      { key: "testing", label: "testing" },
+    ]
+  },
+  {
+    title: "Inventory",
+    columns: [
+      { key: "sku", label: "SKU" },
+      { key: "barcode", label: "Barcodes" },
+      { key: "continue_selling", label: "Continue selling when out of stock" },
+      { key: "track_quantity", label: "Track quantity" },
+    ]
+  },
+  {
+    title: "Shipping",
+    columns: [
+      { key: "package", label: "Package" },
+      { key: "weight", label: "Weight" },
+      { key: "physical", label: "Physical product" },
+      { key: "hs_code", label: "Harmonized system code" },
+      { key: "origin", label: "Country of origin" },
+    ]
+  },
+  {
+    title: "SEO",
+    columns: [
+      { key: "meta_title", label: "Page title (SEO)" },
+      { key: "meta_description", label: "Meta description (SEO)" },
+      { key: "handle", label: "URL handle (SEO)" },
+    ]
+  },
+  {
+    title: "Metafields",
+    columns: [
+      { key: "metafield_category", label: "Category" },
+      { key: "metafield_z8", label: "Z8 Offers" },
+    ]
+  }
+];
+
+function ColumnsPopover({ activeColumns, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+
+  const toggleColumn = (key) => {
+    if (activeColumns.includes(key)) {
+      onChange(activeColumns.filter(c => c !== key));
+    } else {
+      onChange([...activeColumns, key]);
+    }
+  };
+
+  const filteredGroups = useMemo(() => {
+    if (!query) return BULK_COLUMN_GROUPS;
+    const lowerQuery = query.toLowerCase();
+    return BULK_COLUMN_GROUPS.map(g => ({
+      ...g,
+      columns: g.columns.filter(c => c.label.toLowerCase().includes(lowerQuery))
+    })).filter(g => g.columns.length > 0);
+  }, [query]);
+
+  return (
+    <Popover
+      active={open}
+      onClose={() => setOpen(false)}
+      activator={<Button icon={Columns3Minor} onClick={() => setOpen(!open)}>Columns</Button>}
+      autofocusTarget="none"
+      preferredAlignment="right"
+    >
+      <div style={{ width: '320px', display: 'flex', flexDirection: 'column', maxHeight: '500px' }}>
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid #dfe3e8' }}>
+          <TextField
+            prefix={<Icon source={SearchMinor} color="subdued" />}
+            placeholder="Search fields"
+            value={query}
+            onChange={setQuery}
+            autoComplete="off"
+            clearButton
+            onClearButtonClick={() => setQuery("")}
+          />
+        </div>
+        <div style={{ padding: '8px 16px', overflowY: 'auto', flex: 1 }}>
+          {filteredGroups.map(group => (
+            <div key={group.title} style={{ marginBottom: '16px' }}>
+              <Text variant="headingSm" as="h4" fontWeight="bold">
+                <span style={{ display: 'block', marginBottom: '8px' }}>{group.title}</span>
+              </Text>
+              {group.columns.map(col => (
+                <div key={col.key} style={{ marginBottom: '8px' }}>
+                  <Checkbox
+                    label={col.label}
+                    checked={col.key === 'title' || activeColumns.includes(col.key)}
+                    disabled={col.disabled}
+                    onChange={() => toggleColumn(col.key)}
+                  />
+                </div>
+              ))}
+            </div>
+          ))}
+          {filteredGroups.length > 0 && filteredGroups.some(g => g.title === 'Metafields') && (
+            <div style={{ marginTop: '8px', marginBottom: '16px' }}>
+              <Button plain>Show all metafields</Button>
+            </div>
+          )}
+        </div>
+      </div>
+    </Popover>
+  );
+}
+
+function CatalogBulkEditor({ products, columns, onColumnsChange, onSave, isSaving, onDiscard }) {
+  
+  const [expanded, setExpanded] = useState({});
+  const [changes, setChanges] = useState(() => {
+    const initialState = {};
+    products.forEach((p) => {
+      initialState[`p_${p.id}`] = {
+        title: p.title || "",
+        status: p.status?.value || p.status?.label || p.status || "active",
+        product_type: p.product_type || "",
+        product_category: p.product_category || "—",
+        sales_channels: p.sales_channels || "Online Store",
+        online_store_scheduled: p.online_store_scheduled || "false",
+        online_store_publish_date: p.published_at || "—",
+        testing: p.testing || "false",
+        
+        vendor: p.vendor || "",
+        sku: p.sku || "",
+        price: p.price || "",
+        inventory: p.inventory ?? "",
+        tags: Array.isArray(p.tags) ? p.tags.join(', ') : (p.tags || ""),
+        meta_title: p.meta_title || "",
+        meta_description: p.meta_description || "",
+        handle: p.handle || "",
+        published_at: p.published_at || "",
+        description: p.description || p.body_html || "—",
+        template: "product",
+        media: p.image_url || "",
+        sales_channels: "Online Store",
+        schedule: "—",
+        testing: "—",
+        unit_price: p.unit_price || "",
+        compare_at_price: p.compare_at_price || "",
+        cost_per_item: p.cost_per_item || "",
+        charge_taxes: "Yes",
+        barcode: p.barcode || "",
+        continue_selling: "No",
+        track_quantity: "Yes",
+        package: "—",
+        weight: p.weight || "",
+        physical: "Yes",
+        hs_code: p.hs_code || "",
+        origin: p.origin || "US",
+        metafield_category: "—",
+        metafield_z8: "—",
+      };
+      if (p.variants_list) {
+        p.variants_list.forEach(v => {
+          initialState[`v_${v.id}`] = {
+            title: v.title || "",
+            sku: v.sku || "",
+            price: v.price || "",
+            inventory: v.inventory ?? "",
+            compare_at_price: v.compare_at_price || "",
+            cost_per_item: v.cost_per_item || "",
+            barcode: v.barcode || "",
+            weight: v.weight || "",
+            hs_code: v.hs_code || "",
+            origin: v.origin || "US",
+            testing: v.testing || "false",
+          };
+        });
+      }
+    });
+    return initialState;
+  });
+
+  // Automatically expand products that have variants
+  useEffect(() => {
+    const initialExpanded = {};
+    products.forEach(p => {
+      if (p.variants_list && p.variants_list.length > 0) {
+        initialExpanded[p.id] = true;
+      }
+    });
+    setExpanded(initialExpanded);
+  }, [products]);
+
+  const visibleColumns = useMemo(() => {
+    const allDefs = BULK_COLUMN_GROUPS.flatMap(g => g.columns);
+    const activeDefs = [];
+    
+    // Widths mapping for specific columns to look like Shopify
+    const colWidths = {
+      title: '300px',
+      status: '150px',
+      vendor: '180px',
+      price: '160px',
+      sku: '160px',
+      inventory: '140px',
+      product_type: '180px',
+      sales_channels: '180px',
+    };
+    
+    // Always include title first
+    activeDefs.push({ key: "title", label: "Product title", width: colWidths['title'] || '180px' });
+    
+    // Include other selected columns
+    columns.forEach(key => {
+      if (key === 'title') return;
+      const def = allDefs.find(c => c.key === key);
+      if (def) {
+        let width = colWidths[def.key] || '160px';
+        
+        if (def.key === 'status') {
+          activeDefs.push({ ...def, type: 'select', width, options: [{label: "Active", value: "active"}, {label: "Draft", value: "draft"}, {label: "Archived", value: "archived"}] });
+        } else if (def.key === 'template') {
+          activeDefs.push({ ...def, type: 'select', width, options: [
+            {label: "Default product", value: "product"},
+            {label: "alternate", value: "product.alternate"},
+            {label: "coming-soon", value: "product.coming-soon"},
+            {label: "preorder", value: "product.preorder"}
+          ]});
+        } else if (def.key === 'product_type') {
+          activeDefs.push({ ...def, type: 'select', width, options: [
+            {label: "Jcb Service", value: "Jcb Service"},
+            {label: "Snowboard", value: "Snowboard"},
+            {label: "Apparel", value: "Apparel"},
+            {label: "Accessories", value: "Accessories"},
+            {label: "Hardware", value: "Hardware"},
+            {label: "Custom", value: "Custom"},
+            {label: "—", value: "—"}
+          ]});
+        } else if (def.key === 'online_store_scheduled' || def.key === 'testing') {
+          activeDefs.push({ ...def, type: 'checkbox', width: Math.max(width, 100) });
+        } else if (def.key === 'sales_channels') {
+          activeDefs.push({ ...def, type: 'sales_channels', width: Math.max(width, 280) });
+        } else if (def.key === 'product_category') {
+          activeDefs.push({ ...def, type: 'select', width, options: [
+            {label: "Skiing & Snowboarding", value: "Skiing & Snowboarding"},
+            {label: "Sporting Goods", value: "Sporting Goods"},
+            {label: "Apparel & Accessories", value: "Apparel & Accessories"},
+            {label: "Electronics", value: "Electronics"},
+            {label: "Home & Garden", value: "Home & Garden"},
+            {label: "Uncategorized", value: "Uncategorized"},
+            {label: "—", value: "—"}
+          ]});
+        } else if (['price', 'inventory', 'unit_price', 'compare_at_price', 'cost_per_item', 'weight'].includes(def.key)) {
+          activeDefs.push({ ...def, type: 'number', width });
+        } else {
+          activeDefs.push({ ...def, width });
+        }
+      }
+    });
+    
+    return activeDefs;
+  }, [columns]);
+
+  const updateChange = (id, key, value) => {
+    setChanges(prev => ({ ...prev, [id]: { ...prev[id], [key]: value } }));
+  };
+
+  const toggleExpand = (id) => setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
+
+  // Check if any changes were made compared to initial state
+  const hasChanges = true; // Simplified for now
+
+  return (
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#f4f6f8', zIndex: 50, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', alignItems: 'center', height: '56px', borderBottom: '1px solid #dfe3e8', backgroundColor: '#fff', padding: '0 16px', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flex: 1 }}>
+          <Button plain icon={ArrowLeftMinor} onClick={onDiscard}>Back</Button>
+          <div style={{ width: '1px', height: '24px', backgroundColor: '#dfe3e8' }} />
+          <Text as="span" variant="headingSm" fontWeight="semibold">Editing {products.length} products</Text>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <ColumnsPopover activeColumns={columns} onChange={onColumnsChange} />
+          <Button primary disabled={!hasChanges} loading={isSaving} onClick={() => onSave(changes)}>Save</Button>
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflow: 'auto' }}>
+        <table style={{ width: 'max-content', minWidth: '100%', borderCollapse: 'collapse', backgroundColor: '#fff' }}>
+          <thead style={{ position: 'sticky', top: 0, backgroundColor: '#f4f6f8', zIndex: 10, boxShadow: '0 1px 0 0 #dfe3e8' }}>
+            <tr>
+              {visibleColumns.map((col, i) => (
+                <th key={col.key} style={{ width: col.width, minWidth: col.width, padding: '10px 12px', textAlign: col.type === 'number' ? 'right' : 'left', fontWeight: 'normal', color: '#202223', borderRight: i < visibleColumns.length - 1 ? '1px solid #dfe3e8' : 'none', whiteSpace: 'nowrap', position: i === 0 ? 'sticky' : 'static', left: i === 0 ? 0 : 'auto', zIndex: i === 0 ? 11 : 'auto', backgroundColor: '#f4f6f8' }}>
+                  {col.label} {col.key === 'price' && <span style={{ color: '#8c9196', fontSize: '12px', marginLeft: '8px' }}>AUD</span>}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {products.map((p) => {
+              const hasVariants = p.variants_list && p.variants_list.length > 0;
+              const isExpanded = expanded[p.id];
+              return (
+                <Fragment key={p.id}>
+                  <tr style={{ borderBottom: '1px solid #dfe3e8' }}>
+                    {visibleColumns.map((col, i) => {
+                      const isTitle = col.key === 'title';
+                      return (
+                        <td key={col.key} style={{ padding: 0, borderRight: i < visibleColumns.length - 1 ? '1px solid #dfe3e8' : 'none', verticalAlign: 'middle', height: '44px', position: i === 0 ? 'sticky' : 'static', left: i === 0 ? 0 : 'auto', zIndex: i === 0 ? 2 : 'auto', backgroundColor: '#ffffff' }}>
+                          {isTitle ? (
+                            <div style={{ display: 'flex', alignItems: 'center', padding: '0 8px', height: '100%' }}>
+                              <div style={{ width: '28px', height: '28px', border: '1px solid #dfe3e8', borderRadius: '4px', overflow: 'hidden', flexShrink: 0, marginRight: '12px', backgroundColor: '#f4f6f8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                {p.image_url ? <img src={p.image_url} style={{ width: '100%', height: '100%', objectFit: 'contain' }} /> : <Icon source={ImageMajor} color="subdued" />}
+                              </div>
+                              <div style={{ flex: 1, height: '100%' }}>
+                                <BulkInput value={changes[`p_${p.id}`].title} onChange={(v) => updateChange(`p_${p.id}`, 'title', v)} />
+                              </div>
+                              {hasVariants && (
+                                <div style={{ cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }} onClick={() => toggleExpand(p.id)}>
+                                  <Icon source={isExpanded ? ChevronUpMinor : ChevronDownMinor} color="base" />
+                                </div>
+                              )}
+                            </div>
+                          ) : col.type === 'select' ? (
+                            <BulkSelect options={col.options} value={changes[`p_${p.id}`][col.key]} onChange={(v) => updateChange(`p_${p.id}`, col.key, v)} />
+                          ) : col.key === 'media' ? (
+                            <div style={{ padding: '4px 12px', height: '100%', display: 'flex', alignItems: 'center' }}>
+                              {changes[`p_${p.id}`].media ? <img src={changes[`p_${p.id}`].media} style={{ width: '32px', height: '32px', border: '1px solid #dfe3e8', borderRadius: '4px', objectFit: 'contain', backgroundColor: '#f4f6f8' }} /> : <span style={{ color: '#8c9196' }}>—</span>}
+                            </div>
+                          ) : col.type === 'checkbox' ? (
+                            <BulkCheckbox value={changes[`p_${p.id}`][col.key]} onChange={(v) => updateChange(`p_${p.id}`, col.key, v)} />
+                          ) : col.type === 'sales_channels' ? (
+                            <BulkSalesChannels value={changes[`p_${p.id}`][col.key]} onChange={(v) => updateChange(`p_${p.id}`, col.key, v)} />
+                          ) : col.key === 'tags' ? (
+                            <BulkTags value={changes[`p_${p.id}`][col.key]} onChange={(v) => updateChange(`p_${p.id}`, col.key, v)} />
+                          ) : (
+                            <BulkInput type={col.type === 'number' ? 'number' : 'text'} align={col.type === 'number' ? 'right' : 'left'} value={changes[`p_${p.id}`][col.key]} onChange={(v) => updateChange(`p_${p.id}`, col.key, v)} />
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                  
+                  {hasVariants && isExpanded && p.variants_list.map((v) => (
+                    <tr key={`v_${v.id}`} style={{ borderBottom: '1px solid #dfe3e8' }}>
+                      {visibleColumns.map((col, i) => {
+                        const isTitle = col.key === 'title';
+                        const isVariantLevel = ['price', 'sku', 'inventory', 'compare_at_price', 'barcode', 'weight', 'cost_per_item', 'hs_code', 'origin'].includes(col.key);
+                        
+                        return (
+                          <td key={col.key} style={{ padding: 0, borderRight: i < visibleColumns.length - 1 ? '1px solid #dfe3e8' : 'none', verticalAlign: 'middle', height: '44px', backgroundColor: '#fafbfc', position: i === 0 ? 'sticky' : 'static', left: i === 0 ? 0 : 'auto', zIndex: i === 0 ? 2 : 'auto' }}>
+                            {isTitle ? (
+                               <div style={{ display: 'flex', alignItems: 'center', paddingLeft: '48px', height: '100%' }}>
+                                  <div style={{ width: '16px', height: '16px', borderLeft: '1px solid #dfe3e8', borderBottom: '1px solid #dfe3e8', borderBottomLeftRadius: '4px', marginRight: '8px', marginBottom: '8px' }}></div>
+                                  <div style={{ flex: 1, height: '100%' }}>
+                                    <BulkInput value={changes[`v_${v.id}`].title} onChange={(val) => updateChange(`v_${v.id}`, 'title', val)} />
+                                  </div>
+                               </div>
+                            ) : col.key === 'testing' ? (
+                               <BulkCheckbox value={changes[`v_${v.id}`][col.key]} onChange={(val) => updateChange(`v_${v.id}`, col.key, val)} />
+                            ) : isVariantLevel ? (
+                               <BulkInput type={col.type === 'number' ? 'number' : 'text'} align={col.type === 'number' ? 'right' : 'left'} value={changes[`v_${v.id}`][col.key]} onChange={(val) => updateChange(`v_${v.id}`, col.key, val)} />
+                            ) : (
+                               <div style={{ textAlign: 'center', color: '#8c9196' }}>—</div>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      
+    </div>
+  );
+}
 function ColumnsButton({ visibleColumns, onChange }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(visibleColumns);

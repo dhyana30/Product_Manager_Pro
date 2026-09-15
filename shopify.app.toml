@@ -2,7 +2,7 @@
 
 client_id = "93c072cf33f39a4a8b20ce7e82984b38"
 name = "Product_Manager_Pro"
-application_url = " https://california-seem-bills-renew.trycloudflare.com"
+application_url = "https://amy-bacterial-assistant-polymer.trycloudflare.com"
 embedded = true
 
 [access_scopes]
@@ -13,7 +13,7 @@ scopes = "write_products,read_inventory,read_locations,read_files"
 api_version = "2026-10"
 
 [auth]
-redirect_urls = [ " https://california-seem-bills-renew.trycloudflare.com/api/auth" ]
+redirect_urls = [ "https://amy-bacterial-assistant-polymer.trycloudflare.com/api/auth" ]
 
 [build]
 automatically_update_urls_on_dev = true

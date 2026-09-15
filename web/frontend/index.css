@@ -1,25 +1,8 @@
 /* Premium Custom Overrides for Polaris */
 
 :root {
-  --pm-primary: #005bd3;
-  --pm-primary-hover: #0045a1;
-  --pm-surface: #ffffff;
   --pm-background: #f4f6f8;
-  --pm-border: #e1e3e5;
   --pm-text: #202223;
-  --pm-subdued: #6d7175;
-  --pm-success: #008060;
-  --pm-success-bg: #aee9d1;
-  --pm-warning: #8a6116;
-  --pm-warning-bg: #ffea8a;
-  
-  --p-surface: var(--pm-surface);
-  --p-background: var(--pm-background);
-  --p-border-subdued: var(--pm-border);
-  --p-action-primary: var(--pm-primary);
-  --p-action-primary-hovered: var(--pm-primary-hover);
-  --p-text: var(--pm-text);
-  --p-text-subdued: var(--pm-subdued);
   
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
 }
@@ -29,85 +12,10 @@ body {
   color: var(--pm-text);
 }
 
-/* Page Headers */
-.Polaris-Header-Title__TitleAndSubtitleWrapper h1 {
-  font-weight: 700 !important;
-  font-size: 24px !important;
-  color: #111213 !important;
-}
-
-/* Cards & Containers */
-.Polaris-Card {
-  border-radius: 12px !important;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.03) !important;
-  border: 1px solid var(--pm-border) !important;
-  overflow: hidden;
-}
-
-/* Buttons */
-.Polaris-Button {
-  border-radius: 6px !important;
-  font-weight: 500 !important;
-}
-
-.Polaris-Button--primary {
-  background: var(--pm-primary) !important;
-  border-color: var(--pm-primary) !important;
-  color: white !important;
-  box-shadow: 0 2px 4px rgba(0, 91, 211, 0.2) !important;
-}
-
-.Polaris-Button--primary:hover {
-  background: var(--pm-primary-hover) !important;
-}
-
 /* Tables */
-.Polaris-IndexTable__Table {
-  border-collapse: collapse !important;
-}
-
 .Polaris-IndexTable__TableHeading {
-  padding: 14px 16px !important;
-  font-size: 13px !important;
   font-weight: 600 !important;
-  color: var(--pm-text) !important;
-  border-bottom: 1px solid var(--pm-border) !important;
+  color: #202223 !important;
 }
 
-.Polaris-IndexTable__TableCell {
-  padding: 12px 16px !important;
-  font-size: 14px !important;
-  color: var(--pm-text) !important;
-  border-bottom: 1px solid #f1f2f4 !important;
-}
 
-.Polaris-IndexTable__TableRow:hover .Polaris-IndexTable__TableCell {
-  background-color: #f9fafb !important;
-}
-
-/* Badges */
-.Polaris-Badge {
-  border-radius: 12px !important;
-  font-weight: 600 !important;
-  padding: 2px 8px !important;
-}
-
-.Polaris-Badge--statusSuccess {
-  background-color: var(--pm-success-bg) !important;
-  color: var(--pm-success) !important;
-}
-
-.Polaris-Badge--statusWarning, .Polaris-Badge--statusAttention {
-  background-color: var(--pm-warning-bg) !important;
-  color: var(--pm-warning) !important;
-}
-
-/* Inputs & Selects */
-.Polaris-TextField__Input, .Polaris-Select__Input {
-  border-radius: 6px !important;
-  border: 1px solid var(--pm-border) !important;
-}
-.Polaris-TextField__Input:focus, .Polaris-Select__Input:focus {
-  border-color: var(--pm-primary) !important;
-  box-shadow: 0 0 0 1px var(--pm-primary) !important;
-}
