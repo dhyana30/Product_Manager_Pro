@@ -111,12 +111,14 @@ Route::middleware('shopify.auth')->group(function () {
                             vendor
                             templateSuffix
                             publishedAt
+                            createdAt
+                            status
                             handle
                             seo { title description }
                             media(first: 1) { nodes { preview { image { url } } } }
+                            publications(first: 10) { nodes { channel { name } } }
                             category: metafield(namespace: "custom", key: "category") { value }
                             z8_offers: metafield(namespace: "custom", key: "z8_offers") { value }
-                            resourcePublications(first: 10) { nodes { publication { name } } }
                             testing: metafield(namespace: "custom", key: "testing") { value }
                             productCategory { productTaxonomyNode { fullName } }
                             variants(first: 50) {
@@ -128,9 +130,20 @@ Route::middleware('shopify.auth')->group(function () {
                                     sku
                                     barcode
                                     inventoryQuantity
+                                    taxable
+                                    inventoryPolicy
+                                    unitPriceMeasurement {
+                                        measuredType
+                                        quantityValue
+                                        quantityUnit
+                                        referenceValue
+                                        referenceUnit
+                                    }
                                     testing: metafield(namespace: "custom", key: "testing") { value }
                                     inventoryItem {
+                                        tracked
                                         unitCost { amount }
+                                        measurement { weight { value unit } }
                                         harmonizedSystemCode
                                         countryCodeOfOrigin
                                     }
@@ -204,6 +217,22 @@ GRAPHQL;
                     'hs_code' => (isset($rtv['inventoryItem']['harmonizedSystemCode']) ? $rtv['inventoryItem']['harmonizedSystemCode'] : ''),
                     'origin' => (isset($rtv['inventoryItem']['countryCodeOfOrigin']) ? $rtv['inventoryItem']['countryCodeOfOrigin'] : ''),
                     'testing' => (isset($rtv['testing']['value']) && $rtv['testing']['value'] === 'true') ? 'true' : 'false',
+                    'charge_taxes' => (isset($rtv['taxable']) && $rtv['taxable']) ? 'true' : 'false',
+                    'continue_selling' => (isset($rtv['inventoryPolicy']) && $rtv['inventoryPolicy'] === 'CONTINUE') ? 'true' : 'false',
+                    'track_quantity' => (isset($rtv['inventoryItem']['tracked']) && $rtv['inventoryItem']['tracked']) ? 'true' : 'false',
+                    'weight_unit' => isset($rtv['inventoryItem']['measurement']['weight']['unit']) ? (
+                        $rtv['inventoryItem']['measurement']['weight']['unit'] === 'KILOGRAMS' ? 'kg' : (
+                        $rtv['inventoryItem']['measurement']['weight']['unit'] === 'GRAMS' ? 'g' : (
+                        $rtv['inventoryItem']['measurement']['weight']['unit'] === 'POUNDS' ? 'lb' : (
+                        $rtv['inventoryItem']['measurement']['weight']['unit'] === 'OUNCES' ? 'oz' : 'kg')))
+                    ) : 'kg',
+                    'weight_val' => $rtv['inventoryItem']['measurement']['weight']['value'] ?? null,
+                    'unit_price' => isset($rtv['unitPriceMeasurement']) ? json_encode([
+                        'totalMeasure' => $rtv['unitPriceMeasurement']['quantityValue'],
+                        'totalUnit' => $rtv['unitPriceMeasurement']['quantityUnit'],
+                        'baseMeasure' => $rtv['unitPriceMeasurement']['referenceValue'],
+                        'baseUnit' => $rtv['unitPriceMeasurement']['referenceUnit']
+                    ]) : null,
                 ];
             }
             
@@ -212,22 +241,22 @@ GRAPHQL;
             return [
                 'id' => $product->id,
                 'title' => $rt['title'] ?? $product->title,
-                'description' => isset($rt['descriptionHtml']) ? strip_tags($rt['descriptionHtml']) : '—',
+                'description' => isset($rt['descriptionHtml']) ? strip_tags($rt['descriptionHtml']) : '',
                 'product_type' => $rt['productType'] ?? ($product->product_type ?? '—'),
                 'product_category' => $rt['productCategory']['productTaxonomyNode']['fullName'] ?? '—',
-                'sales_channels' => isset($rt['resourcePublications']['nodes']) ? implode(', ', array_map(function($n) { return $n['publication']['name']; }, $rt['resourcePublications']['nodes'])) : 'Online Store',
                 'testing' => (isset($rt['testing']['value']) && $rt['testing']['value'] === 'true') ? 'true' : 'false',
                 'online_store_scheduled' => 'false',
                 'vendor' => $rt['vendor'] ?? ($product->vendor ?: '—'),
                 'status' => isset($rt['status']) ? strtolower($rt['status']) : $product->status,
                 'tags' => $rt['tags'] ?? ($product->tags ? json_decode($product->tags, true) : []),
                 'template' => $rt['templateSuffix'] ?? 'product',
-                'published_at' => ($rt['publishedAt'] ?? null) ? date('Y-m-d', strtotime($rt['publishedAt'])) : 'Not Published',
+                'published_at' => ($rt['publishedAt'] ?? null) ? date('Y-m-d', strtotime($rt['publishedAt'])) : ( (isset($rt['status']) && $rt['status'] === 'ACTIVE') || strtolower($product->status) === 'active' ? (isset($rt['createdAt']) ? date('Y-m-d', strtotime($rt['createdAt'])) : '') : '' ),
                 'handle' => $rt['handle'] ?? $product->handle,
                 'meta_title' => $rt['seo']['title'] ?? $product->meta_title,
                 'meta_description' => $rt['seo']['description'] ?? $product->meta_description,
                 'image_url' => $rt['media']['nodes'][0]['preview']['image']['url'] ?? $product->image_url,
                 'media' => $rt['media']['nodes'][0]['preview']['image']['url'] ?? $product->image_url,
+                'sales_channels' => isset($rt['publications']['nodes']) ? implode(', ', array_map(function($p) { return $p['channel']['name'] ?? 'Online Store'; }, $rt['publications']['nodes'])) : '—',
                 'variants_list' => $mergedVariants,
                 // Top level fallbacks for the product row
                 'sku' => $v1['sku'] ?? '',
@@ -235,10 +264,15 @@ GRAPHQL;
                 'compare_at_price' => $v1['compare_at_price'] ?? '',
                 'cost_per_item' => $v1['cost_per_item'] ?? '',
                 'barcode' => $v1['barcode'] ?? '',
-                'weight' => $v1['weight'] ?? '',
+                'weight' => isset($v1['weight_val']) ? $v1['weight_val'] : ($v1['weight'] ?? ''),
+                'weight_unit' => $v1['weight_unit'] ?? 'kg',
                 'inventory' => $v1['inventory'] ?? 0,
                 'hs_code' => $v1['hs_code'] ?? '',
                 'origin' => $v1['origin'] ?? '',
+                'charge_taxes' => $v1['charge_taxes'] ?? 'false',
+                'continue_selling' => $v1['continue_selling'] ?? 'false',
+                'track_quantity' => $v1['track_quantity'] ?? 'false',
+                'unit_price' => $v1['unit_price'] ?? null,
                 'metafield_category' => $rt['category']['value'] ?? '—',
                 'metafield_z8' => $rt['z8_offers']['value'] ?? '—',
             ];
@@ -286,24 +320,39 @@ GRAPHQL;
 
     Route::put('/products/{id}', function (Request $request, $id) {
         $shop = $request->get('shopifySession')->getShop();
-        $productInput = $request->only(['title', 'vendor', 'status', 'meta_title', 'meta_description', 'handle', 'image_url', 'image_name', 'image_alt']);
         
-        if (!empty($productInput)) {
-            $productInput['updated_at'] = now();
-            DB::table('products_cache')->where('id', $id)->where('shop_domain', $shop)->update($productInput);
+        $realId = $id;
+        $isVariant = false;
+        if (str_starts_with($id, 'v_')) {
+            $isVariant = true;
+            $realId = substr($id, 2);
+        } elseif (str_starts_with($id, 'p_')) {
+            $realId = substr($id, 2);
         }
 
-        if ($request->has('price') || $request->has('sku') || $request->has('variant_title')) {
-            $variantInput = $request->only(['price', 'sku']);
+        if ($isVariant) {
+            $variantInput = $request->only(['price', 'sku', 'title', 'inventory', 'barcode', 'weight', 'compare_at_price', 'cost_per_item', 'hs_code', 'origin', 'testing']);
+            if (!empty($variantInput)) {
+                $variantInput['updated_at'] = now();
+                DB::table('variants_cache')->where('id', $realId)->update($variantInput);
+            }
+        } else {
+            $productInput = $request->only(['title', 'vendor', 'status', 'tags', 'image_url', 'handle']);
+            if (!empty($productInput)) {
+                $productInput['updated_at'] = now();
+                DB::table('products_cache')->where('id', $realId)->where('shop_domain', $shop)->update($productInput);
+            }
+            
+            $variantInput = $request->only(['price', 'sku', 'inventory', 'compare_at_price', 'barcode', 'weight', 'cost_per_item', 'hs_code', 'origin']);
             if ($request->has('variant_title')) {
                 $variantInput['title'] = $request->input('variant_title');
             }
             if (!empty($variantInput)) {
                 $variantInput['updated_at'] = now();
-                // Assumes updating the primary/first variant for simplicity in inline edit
-                DB::table('variants_cache')->where('product_cache_id', $id)->limit(1)->update($variantInput);
+                DB::table('variants_cache')->where('product_cache_id', $realId)->limit(1)->update($variantInput);
             }
         }
+
         return response()->json(['success' => true]);
     });
 
@@ -426,7 +475,7 @@ query ProductSync($cursor: String) {
       id title handle vendor status tags
       featuredImage { url }
       seo { title description }
-                            resourcePublications(first: 10) { nodes { publication { name } } }
+                            publications(first: 10) { nodes { channel { name } } }
                             testing: metafield(namespace: "custom", key: "testing") { value }
                             productCategory { productTaxonomyNode { fullName } }
             variants(first: 50) {
@@ -809,71 +858,83 @@ GRAPHQL,
             $columns[] = 'Image URL';
         }
         
-        $callback = function() use($shop, $columns, $includeImages, $includeVariants) {
-            $file = fopen('php://output', 'w');
-            fputcsv($file, $columns);
-            
-            DB::table('products_cache')
-                ->where('shop_domain', $shop)
-                ->orderBy('id')
-                ->chunk(100, function ($products) use ($file, $includeImages, $includeVariants) {
-                    foreach ($products as $product) {
-                        if ($includeVariants) {
-                            $variants = DB::table('variants_cache')->where('product_cache_id', $product->id)->get();
-                            if ($variants->isEmpty()) {
-                                $inventory = DB::table('inventory_cache')->where('product_cache_id', $product->id)->sum('available');
-                                $row = [
-                                    $product->product_gid,
-                                    $product->title,
-                                    $product->handle,
-                                    $product->vendor,
-                                    $product->status,
-                                    '',
-                                    '',
-                                    $inventory
-                                ];
-                                if ($includeImages) $row[] = $product->image_url;
-                                fputcsv($file, $row);
-                            } else {
-                                foreach ($variants as $variant) {
-                                    $inventory = DB::table('inventory_cache')->where('variant_cache_id', $variant->id)->sum('available');
-                                    $row = [
-                                        $product->product_gid,
-                                        $product->title . ($variant->title && $variant->title != 'Default Title' ? ' - ' . $variant->title : ''),
-                                        $product->handle,
-                                        $product->vendor,
-                                        $product->status,
-                                        $variant->price,
-                                        $variant->sku,
-                                        $inventory
-                                    ];
-                                    if ($includeImages) $row[] = $product->image_url;
-                                    fputcsv($file, $row);
-                                }
-                            }
-                        } else {
+        $dataRows = [$columns];
+        DB::table('products_cache')
+            ->where('shop_domain', $shop)
+            ->orderBy('id')
+            ->chunk(100, function ($products) use (&$dataRows, $includeImages, $includeVariants) {
+                foreach ($products as $product) {
+                    if ($includeVariants) {
+                        $variants = DB::table('variants_cache')->where('product_cache_id', $product->id)->get();
+                        if ($variants->isEmpty()) {
                             $inventory = DB::table('inventory_cache')->where('product_cache_id', $product->id)->sum('available');
-                            $price = DB::table('variants_cache')->where('product_cache_id', $product->id)->min('price');
-                            $sku = DB::table('variants_cache')->where('product_cache_id', $product->id)->first()->sku ?? '';
                             $row = [
                                 $product->product_gid,
                                 $product->title,
                                 $product->handle,
                                 $product->vendor,
                                 $product->status,
-                                $price,
-                                $sku,
+                                '',
+                                '',
                                 $inventory
                             ];
                             if ($includeImages) $row[] = $product->image_url;
-                            fputcsv($file, $row);
+                            $dataRows[] = $row;
+                        } else {
+                            foreach ($variants as $variant) {
+                                $inventory = DB::table('inventory_cache')->where('variant_cache_id', $variant->id)->sum('available');
+                                $row = [
+                                    $product->product_gid,
+                                    $product->title . ($variant->title && $variant->title != 'Default Title' ? ' - ' . $variant->title : ''),
+                                    $product->handle,
+                                    $product->vendor,
+                                    $product->status,
+                                    $variant->price,
+                                    $variant->sku,
+                                    $inventory
+                                ];
+                                if ($includeImages) $row[] = $product->image_url;
+                                $dataRows[] = $row;
+                            }
                         }
+                    } else {
+                        $inventory = DB::table('inventory_cache')->where('product_cache_id', $product->id)->sum('available');
+                        $price = DB::table('variants_cache')->where('product_cache_id', $product->id)->min('price');
+                        $sku = DB::table('variants_cache')->where('product_cache_id', $product->id)->first()->sku ?? '';
+                        $row = [
+                            $product->product_gid,
+                            $product->title,
+                            $product->handle,
+                            $product->vendor,
+                            $product->status,
+                            $price,
+                            $sku,
+                            $inventory
+                        ];
+                        if ($includeImages) $row[] = $product->image_url;
+                        $dataRows[] = $row;
                     }
-                });
-            fclose($file);
-        };
+                }
+            });
 
-        return response()->stream($callback, 200, $headers);
+        if ($format === 'xlsx') {
+            $xlsx = \Shuchkin\SimpleXLSXGen::fromArray($dataRows);
+            $tmpFile = tempnam(sys_get_temp_dir(), 'export_');
+            $xlsx->saveAs($tmpFile);
+            return response()->download($tmpFile, "products-export.xlsx", [
+                "Content-type"        => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "Content-Disposition" => "attachment; filename=products-export.xlsx",
+            ])->deleteFileAfterSend(true);
+        } else {
+            $callback = function() use($dataRows) {
+                $file = fopen('php://output', 'w');
+                foreach ($dataRows as $row) {
+                    fputcsv($file, $row);
+                }
+                fclose($file);
+            };
+            return response()->stream($callback, 200, $headers);
+        }
     });
 
     Route::get('/settings', function (Request $request) {
