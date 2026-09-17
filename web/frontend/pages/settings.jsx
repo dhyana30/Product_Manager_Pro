@@ -1,3 +1,4 @@
+import { useNavigate } from "react-router-dom";
 import React, { useState } from "react";
 import * as XLSX from "xlsx";
 import {
@@ -106,6 +107,7 @@ const RESPONSIVE_CSS = `
 `;
 
 export default function Settings() {
+  const navigate = useNavigate();
   const fetch = useAuthenticatedFetch();
   const [selectedMenu, setSelectedMenu] = useState("general");
 

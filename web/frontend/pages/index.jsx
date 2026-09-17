@@ -33,9 +33,50 @@ const TONE_COLOR = {
 };
 
 function statusBadgeTone(status) {
+  if (status === 'Queued') return 'new';
+  if (status === 'Running') return 'info';
+  if (status === 'Completed') return 'success';
+  if (status === 'Failed') return 'critical';
+  if (status === 'Cancelled') return 'warning';
   if (status.startsWith("Processing")) return "attention";
-  if (status === "Failed") return "critical";
   return "success";
+}
+
+function BulkJobRow({ job, isLast }) {
+  const [expanded, setExpanded] = useState(false);
+  
+  return (
+    <div>
+      <div style={{...s.tableRow, cursor: "pointer"}} onClick={() => setExpanded(!expanded)}>
+        <span style={s.colJob}>
+          <Text as="span" fontWeight="medium">{job.name}</Text>
+        </span>
+        <span style={s.colType}>
+          <Text as="span" color="subdued">{job.type}</Text>
+        </span>
+        <span style={s.colStatus}>
+          <Badge status={statusBadgeTone(job.status)}>
+            {job.status} {job.status === 'Running' && job.progress > 0 ? `(${job.progress}%)` : ''}
+          </Badge>
+        </span>
+        <span style={s.colStarted}>
+          <Text as="span" color="subdued">{job.started ? new Date(job.started).toLocaleString() : '-'}</Text>
+        </span>
+        <span style={s.colRecords}>
+          <Text as="span">{job.records}</Text>
+        </span>
+        <span style={{ ...s.colChevron, color: "#8a8f96" }}>
+          {expanded ? "▼" : "▶"}
+        </span>
+      </div>
+      {expanded && job.error_message && (
+        <div style={{ padding: "12px 20px", backgroundColor: "#fafbfb", borderTop: "1px solid #ebebeb", borderBottom: "1px solid #ebebeb" }}>
+          <Text as="p" color="critical">Error: {job.error_message}</Text>
+        </div>
+      )}
+      {!isLast && <Divider />}
+    </div>
+  );
 }
 
 const RESPONSIVE_CSS = `
@@ -118,7 +159,7 @@ export default function HomePage() {
 
       <div className="pmp-grid" style={s.grid}>
         <div style={s.colOneThird}>
-          <ExportCard navigate={navigate} data={data.IMPORT_EXPORT} />
+          <ExportCard navigate={navigate} />
         </div>
         <div style={s.colTwoThirds}>
           <AiUsageCard navigate={navigate} data={data.AI_USAGE} />
@@ -261,6 +302,7 @@ function KpiCard({ data }) {
 // ---------------------------------------------------------------------------
 
 function BulkJobsCard({ data }) {
+  const navigate = useNavigate();
   if (!data) return null;
   return (
     <Card>
@@ -269,7 +311,7 @@ function BulkJobsCard({ data }) {
           <Text as="h2" variant="headingMd">
             Recent Bulk Jobs
           </Text>
-          <LinkButton label="View all bulk jobs" />
+          <Button plain onClick={() => navigate("/bulk-jobs")}>View all bulk jobs</Button>
         </Stack>
       </div>
 
@@ -299,36 +341,11 @@ function BulkJobsCard({ data }) {
         </div>
       ) : (
         data.map((job, i) => (
-          <div key={job.name}>
-            <div style={s.tableRow}>
-              <span style={s.colJob}>
-                <Text as="span" fontWeight="medium">{job.name}</Text>
-              </span>
-              <span style={s.colType}>
-                <Text as="span" color="subdued">{job.type}</Text>
-              </span>
-              <span style={s.colStatus}>
-                <Badge status={statusBadgeTone(job.status)}>{job.status}</Badge>
-              </span>
-              <span style={s.colStarted}>
-                <Text as="span" color="subdued">{job.started}</Text>
-              </span>
-              <span style={s.colRecords}>
-                <Text as="span">{job.records}</Text>
-              </span>
-              <span style={{ ...s.colChevron, color: "#8a8f96" }}>
-                <IconChevronRight />
-              </span>
-            </div>
-            {i < data.length - 1 && <Divider />}
-          </div>
+          <BulkJobRow key={job.id || i} job={job} isLast={i === data.length - 1} />
         ))
       )}
 
-      <div style={s.pad}>
-        <LinkButton label="View all bulk jobs" />
-      </div>
-    </Card>
+      </Card>
   );
 }
 
@@ -336,7 +353,44 @@ function BulkJobsCard({ data }) {
 // Sync Activity
 // ---------------------------------------------------------------------------
 
+function SyncActivityRow({ job, isLast }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div>
+      <div style={{...s.tableRow, cursor: "pointer"}} onClick={() => setExpanded(!expanded)}>
+        <span style={s.colJob}>
+          <Text as="span" fontWeight="medium">{job.type}</Text>
+        </span>
+        <span style={s.colType}>
+          <Text as="span" color="subdued">{job.direction}</Text>
+        </span>
+        <span style={s.colStatus}>
+          <Badge status={statusBadgeTone(job.status)}>
+            {job.status} {job.status === 'Running' && job.progress > 0 ? `(${job.progress}%)` : ''}
+          </Badge>
+        </span>
+        <span style={s.colStarted}>
+          <Text as="span" color="subdued">{job.started ? new Date(job.started).toLocaleString() : '-'}</Text>
+        </span>
+        <span style={s.colRecords}>
+          <Text as="span">{job.records}</Text>
+        </span>
+        <span style={{ ...s.colChevron, color: "#8a8f96" }}>
+          {expanded ? "▼" : "▶"}
+        </span>
+      </div>
+      {expanded && job.error_message && (
+        <div style={{ padding: "12px 20px", backgroundColor: "#fafbfb", borderTop: "1px solid #ebebeb", borderBottom: "1px solid #ebebeb" }}>
+          <Text as="p" color="critical">Error: {job.error_message}</Text>
+        </div>
+      )}
+      {!isLast && <Divider />}
+    </div>
+  );
+}
+
 function SyncActivityCard({ data }) {
+  const navigate = useNavigate();
   if (!data) return null;
   return (
     <Card>
@@ -345,30 +399,39 @@ function SyncActivityCard({ data }) {
           <Text as="h2" variant="headingMd">
             Sync Activity
           </Text>
-          <LinkButton label="View all activity" />
+          <Button plain onClick={() => navigate("/sync-activity")}>View all activity</Button>
         </Stack>
-
-        <div style={{ marginTop: 16 }}>
-          {data.length === 0 ? (
-            <div style={{ padding: "16px 0", textAlign: "center" }}>
-              <Text as="p" color="subdued">No recent sync activity</Text>
-            </div>
-          ) : (
-            data.map((event, i) => (
-              <div key={event.title + i} style={s.timelineRow}>
-                <div style={s.timelineMarker}>
-                  <span style={{ ...s.timelineDot, background: TONE_COLOR[event.tone] }} />
-                  {i < data.length - 1 && <span style={s.timelineLine} />}
-                </div>
-                <div style={{ paddingBottom: 20 }}>
-                  <Text as="p" fontWeight="medium">{event.title}</Text>
-                  <Text as="p" color="subdued">{event.detail}</Text>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
       </div>
+
+      <div style={s.tableHead}>
+        <span style={s.colJob}>
+          <Text as="span" color="subdued">Sync Type</Text>
+        </span>
+        <span style={s.colType}>
+          <Text as="span" color="subdued">Direction</Text>
+        </span>
+        <span style={s.colStatus}>
+          <Text as="span" color="subdued">Status</Text>
+        </span>
+        <span style={s.colStarted}>
+          <Text as="span" color="subdued">Started</Text>
+        </span>
+        <span style={s.colRecords}>
+          <Text as="span" color="subdued">Records</Text>
+        </span>
+        <span style={s.colChevron} />
+      </div>
+      <Divider />
+
+      {data.length === 0 ? (
+        <div style={{ padding: "32px 20px", textAlign: "center" }}>
+          <Text as="p" color="subdued">No recent sync activity</Text>
+        </div>
+      ) : (
+        data.map((job, i) => (
+          <SyncActivityRow key={job.id || i} job={job} isLast={i === data.length - 1} />
+        ))
+      )}
     </Card>
   );
 }
@@ -377,8 +440,20 @@ function SyncActivityCard({ data }) {
 // Import / Export Status
 // ---------------------------------------------------------------------------
 
-function ExportCard({ navigate, data }) {
-  if (!data) return null;
+function ExportCard({ navigate }) {
+  const [data, setData] = useState([]);
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('recent_exports') || '[]');
+      const mapped = stored.slice(0, 3).map(job => ({
+        label: job.name,
+        date: job.date,
+        status: "Completed"
+      }));
+      setData(mapped);
+    } catch {}
+  }, []);
+
   return (
     <Card>
       <div style={s.pad}>
@@ -398,25 +473,27 @@ function ExportCard({ navigate, data }) {
             data.map((row, i) => {
               const Icon = IconDownload;
               const rowStyle =
-                i < data.length - 1
+                i === data.length - 1
                   ? s.ieRow
                   : { ...s.ieRow, borderBottom: "none" };
               return (
-                <div key={row.label} style={rowStyle}>
-                  <span style={s.ieIcon}>
+                <div key={i} style={rowStyle}>
+                  <div style={s.ieIcon}>
                     <Icon size={20} />
-                  </span>
-                  <div style={{ flex: 1 }}>
-                    <Text as="p" fontWeight="medium">{row.label}</Text>
-                    <Text as="p" color="subdued">{row.detail}</Text>
                   </div>
-                  <div style={{ textAlign: "right" }}>
-                    <Text as="p" variant="headingMd">{row.records}</Text>
-                    <Text as="p" color="subdued">Records</Text>
+                  <div style={{ flex: 1, marginLeft: 12 }}>
+                    <Text as="p" fontWeight="bold">
+                      {row.label}
+                    </Text>
+                    <Text as="p" color="subdued" variant="bodySm">
+                      {row.date}
+                    </Text>
                   </div>
-                  <span style={{ color: "#008060", marginLeft: 12 }}>
-                    <IconCheckCircle />
-                  </span>
+                  {row.status === "Completed" ? (
+                    <Badge status="success">Completed</Badge>
+                  ) : (
+                    <Badge status="warning">{row.status}</Badge>
+                  )}
                 </div>
               );
             })
@@ -426,7 +503,6 @@ function ExportCard({ navigate, data }) {
     </Card>
   );
 }
-
 // ---------------------------------------------------------------------------
 // AI Usage
 // ---------------------------------------------------------------------------

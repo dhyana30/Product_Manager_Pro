@@ -1,13 +1,17 @@
 import { useState } from "react";
 import { Button, Card, Layout, Page, Stack, Text, Toast } from "@shopify/polaris";
 import { TitleBar, useAuthenticatedFetch } from "@shopify/app-bridge-react";
+import { useNavigate } from "react-router-dom";
 
 export default function Export() {
   const fetch = useAuthenticatedFetch();
+  const navigate = useNavigate();
   const [isExporting, setIsExporting] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
-
   const [format, setFormat] = useState('csv');
+  const [recentJobs, setRecentJobs] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('recent_exports') || '[]'); } catch { return []; }
+  });
 
   const handleExport = async () => {
     setIsExporting(true);
@@ -26,6 +30,10 @@ export default function Export() {
       window.URL.revokeObjectURL(url);
       
       setToastMsg("Export completed successfully");
+      const newJob = { id: Date.now(), format, date: new Date().toLocaleString(), name: `products-export.${format}` };
+      const updatedJobs = [newJob, ...recentJobs].slice(0, 5);
+      setRecentJobs(updatedJobs);
+      localStorage.setItem('recent_exports', JSON.stringify(updatedJobs));
     } catch (err) {
       setToastMsg("Failed to start export");
     } finally {
@@ -34,8 +42,8 @@ export default function Export() {
   };
 
   return (
-    <Page fullWidth>
-      <TitleBar title="Export" primaryAction={{ content: "Export catalog", onAction: handleExport, loading: isExporting }} />
+    <Page title="Export" backAction={{ content: "Dashboard", onAction: () => navigate("/") }}>
+      
       {toastMsg && <Toast content={toastMsg} onDismiss={() => setToastMsg("")} />}
       <Layout>
         <Layout.Section>
@@ -58,12 +66,7 @@ export default function Export() {
             </Card>
           </div>
         </Layout.Section>
-        <Layout.Section secondary>
-          <Card title="Recent jobs" sectioned>
-            <Text as="p">No exports are running.</Text>
-            <Text as="p" color="subdued">Completed files remain available for 24 hours.</Text>
-          </Card>
-        </Layout.Section>
+        
       </Layout>
     </Page>
   );

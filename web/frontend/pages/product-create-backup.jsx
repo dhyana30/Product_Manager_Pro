@@ -18,6 +18,7 @@ import { TitleBar } from '@shopify/app-bridge-react';
 import { useAuthenticatedFetch } from '../hooks';
 
 export default function ProductCreate() {
+  
   const navigate = useNavigate();
   const fetch = useAuthenticatedFetch();
 
@@ -84,7 +85,7 @@ export default function ProductCreate() {
   };
 
   return (
-    <Page fullWidth>
+    <Page backAction={{ content: "Dashboard", onAction: () => navigate("/") }} fullWidth>
       <TitleBar 
         title="Add product" 
         primaryAction={{

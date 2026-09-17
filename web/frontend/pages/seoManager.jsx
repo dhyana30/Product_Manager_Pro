@@ -1,4 +1,5 @@
 import { ErrorBoundary } from "../components/ErrorBoundary";
+import { useNavigate } from "react-router-dom";
 import React, { useState, useEffect } from 'react';
 import {
   Page,
@@ -417,13 +418,13 @@ function SeoManagerContent() {
 
   if (isBulkEditing) {
     return (
-      <Page fullWidth>
+      <Page fullWidth title="SEO Bulk Editor" backAction={{ content: "SEO Manager", onAction: () => setIsBulkEditing(false) }}>
         <div style={{ padding: '20px 0' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
             <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-              <Button plain icon={ArrowLeftMinor} onClick={() => setIsBulkEditing(false)} />
+              
               <div>
-                <Text variant="headingLg" as="h1">SEO Bulk Editor</Text>
+                
                 <Text variant="bodySm" color="subdued">{Object.keys(bulkEditData).length} selected products</Text>
               </div>
             </div>
@@ -483,7 +484,7 @@ function SeoManagerContent() {
   }
 
   return (
-    <Page fullWidth>
+    <Page fullWidth title="SEO Bulk Editor" backAction={{ content: "SEO Manager", onAction: () => setIsBulkEditing(false) }}>
       <TitleBar title="SEO Manager" />
 
 
@@ -707,6 +708,7 @@ function FilterPopover(props) {
 
 
 export default function SeoManager() {
+  const navigate = useNavigate();
   return (
     <ErrorBoundary>
       <SeoManagerContent />

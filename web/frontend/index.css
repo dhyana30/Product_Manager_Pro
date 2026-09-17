@@ -19,3 +19,26 @@ body {
 }
 
 
+
+/* Shopify style adjustments for Jodit Editor */
+.shopify-style-editor.jodit-container:not(.jodit_inline) {
+    border: none !important;
+}
+.shopify-style-editor .jodit-toolbar__box {
+    background-color: #f6f6f7 !important;
+    border-bottom: 1px solid #dfe3e8 !important;
+}
+.shopify-style-editor .jodit-workplace {
+    background-color: #ffffff !important;
+}
+.shopify-style-editor .jodit-toolbar-button__button {
+    border-radius: 4px !important;
+}
+.shopify-style-editor .jodit-toolbar-button__button:hover {
+    background-color: #e3e5e7 !important;
+}
+
+/* Focus state matching Polaris */
+.shopify-style-editor.jodit-container:not(.jodit_inline):focus-within {
+    box-shadow: 0 0 0 2px #2c6ecb !important;
+}

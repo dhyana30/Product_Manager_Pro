@@ -1,3 +1,4 @@
+import { useNavigate } from "react-router-dom";
 import React, { useState } from 'react';
 import {
   Page,
@@ -25,6 +26,7 @@ import {
 import { TitleBar } from '@shopify/app-bridge-react';
 
 export default function Notifications() {
+  const navigate = useNavigate();
   const [selectedTab, setSelectedTab] = useState(0);
 
 

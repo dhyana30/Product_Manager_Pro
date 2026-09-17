@@ -3,7 +3,8 @@ import { Modal, Text, Spinner, TextField, Icon } from '@shopify/polaris';
 import { SearchMinor } from '@shopify/polaris-icons';
 import { useAuthenticatedFetch } from '../hooks/useAuthenticatedFetch';
 
-export function FileSelectorModal({ open, onClose, onSelect }) {
+export function FileSelectorModal({ open, onClose, onSelect, multiSelect = false }) {
+  const [selectedIds, setSelectedIds] = useState([]);
   const [files, setFiles] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -13,6 +14,7 @@ export function FileSelectorModal({ open, onClose, onSelect }) {
   useEffect(() => {
     if (open) {
       loadFiles();
+      setSelectedIds([]);
     }
   }, [open]);
 
@@ -20,7 +22,7 @@ export function FileSelectorModal({ open, onClose, onSelect }) {
     setIsLoading(true);
     setError('');
     try {
-      const response = await authenticatedFetch('/api/files');
+      const response = await authenticatedFetch('/api/store-media');
       if (!response.ok) throw new Error('Failed to fetch files');
       const payload = await response.json();
       setFiles(payload.data || []);
@@ -44,6 +46,14 @@ export function FileSelectorModal({ open, onClose, onSelect }) {
       open={open}
       onClose={onClose}
       title="Select existing image"
+      primaryAction={multiSelect ? {
+        content: 'Add selected',
+        onAction: () => {
+          const selectedFiles = files.filter(f => selectedIds.includes(f.id));
+          onSelect(selectedFiles);
+        },
+        disabled: selectedIds.length === 0
+      } : undefined}
       secondaryActions={[
         {
           content: 'Cancel',
@@ -99,20 +109,31 @@ export function FileSelectorModal({ open, onClose, onSelect }) {
                 // Ignore URL parsing errors
               }
 
+              const isSelected = selectedIds.includes(file.id);
+              
               return (
                 <div 
                   key={file.id} 
-                  onClick={() => onSelect(file)}
+                  onClick={() => {
+                    if (multiSelect) {
+                      setSelectedIds(prev => 
+                        isSelected ? prev.filter(id => id !== file.id) : [...prev, file.id]
+                      );
+                    } else {
+                      onSelect(file);
+                    }
+                  }}
                   style={{ 
                     cursor: 'pointer',
                     display: 'flex',
                     flexDirection: 'column',
                     alignItems: 'center',
-                    gap: '8px'
+                    gap: '8px',
+                    position: 'relative'
                   }}
                 >
                   <div style={{
-                    border: '1px solid #dfe3e8',
+                    border: isSelected ? '2px solid #008060' : '1px solid #dfe3e8',
                     borderRadius: '8px',
                     overflow: 'hidden',
                     aspectRatio: '1',
@@ -127,6 +148,9 @@ export function FileSelectorModal({ open, onClose, onSelect }) {
                       alt={file.altText || name} 
                       style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
                     />
+                    {multiSelect && isSelected && (
+                      <div style={{ position: 'absolute', top: 8, right: 8, background: '#008060', color: 'white', borderRadius: '50%', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>✓</div>
+                    )}
                   </div>
                   <div style={{ textAlign: 'center', width: '100%', overflow: 'hidden' }}>
                     <Text variant="bodySm" as="p" truncate>{name}</Text>

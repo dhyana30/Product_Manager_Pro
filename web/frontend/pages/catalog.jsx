@@ -84,11 +84,13 @@ const SORT_OPTIONS = [
 ];
 
 export default function Catalog() {
+  
   const [query, setQuery] = useState("");
   const [products, setProducts] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isPushing, setIsPushing] = useState(false);
+  const [confirmPushOpen, setConfirmPushOpen] = useState(false);
   const [error, setError] = useState("");
   const [syncMessage, setSyncMessage] = useState("");
   const authenticatedFetch = useAuthenticatedFetch();
@@ -332,10 +334,10 @@ export default function Catalog() {
             <Text variant="headingMd">Products</Text>
             <ButtonGroup>
               <Button icon={ImportMinor} loading={isSyncing} onClick={() => setConfirmSyncOpen(true)}>
-                Sync from Shopify
+                Shopify → App
               </Button>
-              <Button icon={ExportMinor} loading={isPushing} onClick={syncToShopify}>
-                Sync to Shopify
+              <Button icon={ExportMinor} loading={isPushing} onClick={() => setConfirmPushOpen(true)}>
+                App → Shopify
               </Button>
               <CreateProductButton />
             </ButtonGroup>
@@ -472,6 +474,12 @@ export default function Catalog() {
         </div>
       </Card>
 
+      <ConfirmPushModal
+        open={confirmPushOpen}
+        loading={isPushing}
+        onCancel={() => setConfirmPushOpen(false)}
+        onConfirm={() => { setConfirmPushOpen(false); syncToShopify(); }}
+      />
       <ConfirmSyncModal
         open={confirmSyncOpen}
         loading={isSyncing}
@@ -2236,17 +2244,33 @@ function PriceButton({ disabled, count }) {
   );
 }
 
+function ConfirmPushModal({ open, loading, onCancel, onConfirm }) {
+  return (
+    <Modal
+      open={open}
+      onClose={onCancel}
+      title="App → Shopify (Push Sync)"
+      primaryAction={{ content: "Sync now", onAction: onConfirm, loading }}
+      secondaryActions={[{ content: "Cancel", onAction: onCancel }]}
+    >
+      <Modal.Section>
+        <Text as="p">This will push your local changes (Products, Variants, Inventory, Images, ALT text, SEO, Tags, and Collections) back to Shopify.</Text>
+      </Modal.Section>
+    </Modal>
+  );
+}
+
 function ConfirmSyncModal({ open, loading, onCancel, onConfirm }) {
   return (
     <Modal
       open={open}
       onClose={onCancel}
-      title="Sync catalog now?"
+      title="Shopify → App (Pull Sync)"
       primaryAction={{ content: "Sync now", onAction: onConfirm, loading }}
       secondaryActions={[{ content: "Cancel", onAction: onCancel }]}
     >
       <Modal.Section>
-        <Text as="p">This will sync your catalog and inventory with the latest data from Shopify.</Text>
+        <Text as="p">This will pull Products, Variants, Inventory, Collections, Images, and Metafields from Shopify to the app's local database.</Text>
       </Modal.Section>
     </Modal>
   );

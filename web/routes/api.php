@@ -61,8 +61,37 @@ Route::middleware('shopify.auth')->group(function () {
                 ['label' => 'Draft Products', 'value' => (string) $draftProductsCount, 'change' => ''],
                 ['label' => 'Total Inventory', 'value' => (string) $totalInventory, 'change' => ''],
             ],
-            'BULK_JOBS' => [],
-            'SYNC_ACTIVITY' => [],
+                        'BULK_JOBS' => DB::table('bulk_jobs')
+                ->where('shop_domain', $shop)
+                ->orderBy('created_at', 'desc')
+                ->limit(10)
+                ->get()
+                ->map(fn($job) => [
+                    'id' => $job->id,
+                    'name' => $job->job_name,
+                    'type' => $job->job_type,
+                    'status' => $job->status,
+                    'started' => $job->started_at,
+                    'records' => $job->records_affected,
+                    'progress' => $job->progress,
+                    'error_message' => $job->error_message
+                ]),
+                        'SYNC_ACTIVITY' => DB::table('bulk_jobs')
+                ->where('shop_domain', $shop)
+                ->whereIn('job_type', ['Catalog Sync', 'Catalog Push'])
+                ->orderBy('created_at', 'desc')
+                ->limit(10)
+                ->get()
+                ->map(fn($job) => [
+                    'id' => $job->id,
+                    'type' => $job->job_type,
+                    'direction' => $job->job_type === 'Catalog Sync' ? 'Shopify → App' : 'App → Shopify',
+                    'status' => $job->status,
+                    'started' => $job->started_at,
+                    'completed' => $job->completed_at,
+                    'records' => $job->records_affected,
+                    'error_message' => $job->error_message
+                ]),
             'IMPORT_EXPORT' => [],
             'AI_USAGE' => [
                 'rangeLabel' => 'This month',
@@ -356,7 +385,7 @@ GRAPHQL;
         return response()->json(['success' => true]);
     });
 
-    Route::post('/products/create', function (Request $request) {
+            Route::post('/products/create', function (Request $request) {
         $session = $request->get('shopifySession');
         $client = new Graphql($session->getShop(), $session->getAccessToken());
 
@@ -378,31 +407,106 @@ GRAPHQL;
                 'description' => $request->input('seoDescription'),
             ];
         }
+        
+        if ($request->filled('tags')) {
+            $input['tags'] = array_map('trim', explode(',', $request->input('tags')));
+        }
 
         $variantInput = [];
         if ($request->filled('price')) $variantInput['price'] = $request->input('price');
         if ($request->filled('compareAtPrice')) $variantInput['compareAtPrice'] = $request->input('compareAtPrice');
+        if ($request->has('taxable')) $variantInput['taxable'] = filter_var($request->input('taxable'), FILTER_VALIDATE_BOOLEAN);
+        
+        $unitPriceMeasurement = $request->input('unitPriceMeasurement');
+        if (!empty($unitPriceMeasurement) && is_array($unitPriceMeasurement)) {
+            $variantInput['unitPriceMeasurement'] = $unitPriceMeasurement;
+        }
+
         if ($request->filled('sku')) $variantInput['sku'] = $request->input('sku');
         if ($request->filled('barcode')) $variantInput['barcode'] = $request->input('barcode');
+        
+        $weight = (float) $request->input('weight', 0);
+        if ($weight > 0) {
+            $variantInput['weight'] = $weight;
+            $variantInput['weightUnit'] = 'KILOGRAMS';
+        }
 
         $inventoryItemInput = [];
         if ($request->filled('costPerItem')) $inventoryItemInput['cost'] = $request->input('costPerItem');
-        if ($request->boolean('continueSelling')) $inventoryItemInput['tracked'] = true; // Simplified
-        
+        if ($request->filled('countryOfOrigin')) $inventoryItemInput['countryCodeOfOrigin'] = $request->input('countryOfOrigin');
+        if ($request->filled('hsCode')) $inventoryItemInput['harmonizedSystemCode'] = $request->input('hsCode');
+        $inventoryItemInput['tracked'] = filter_var($request->input('inventoryTracked', true), FILTER_VALIDATE_BOOLEAN);
+
         if (!empty($inventoryItemInput)) {
             $variantInput['inventoryItem'] = $inventoryItemInput;
         }
+        $variantInput['inventoryPolicy'] = filter_var($request->input('continueSelling', false), FILTER_VALIDATE_BOOLEAN) ? 'CONTINUE' : 'DENY';
 
         if (!empty($variantInput)) {
             $input['variants'] = [$variantInput];
         }
+        
+        // Handle Media Uploads and Order
+        $mediaInput = [];
+        $uploadDirectory = public_path('assets/uploads');
+        if (!is_dir($uploadDirectory)) {
+            mkdir($uploadDirectory, 0755, true);
+        }
+        
+        $files = $request->file('media') ?: [];
+        $mediaOrderStr = $request->input('mediaOrder');
+        
+        if ($mediaOrderStr) {
+            $mediaOrder = json_decode($mediaOrderStr, true) ?? [];
+            foreach ($mediaOrder as $item) {
+                if ($item['type'] === 'local') {
+                    $fileIndex = $item['fileIndex'] ?? 0;
+                    $file = $files[$fileIndex] ?? null;
+                    if ($file) {
+                        $filename = uniqid('product-media-', true) . '.' . $file->getClientOriginalExtension();
+                        $file->move($uploadDirectory, $filename);
+                        $host = $request->header('X-Forwarded-Host', $request->getHost());
+                        $scheme = $request->header('X-Forwarded-Proto', 'https');
+                        $imageUrl = $scheme . '://' . $host . '/assets/uploads/' . $filename;
+                        
+                        $mediaInput[] = [
+                            'originalSource' => $imageUrl,
+                            'mediaContentType' => 'IMAGE',
+                            'alt' => $file->getClientOriginalName()
+                        ];
+                    }
+                } else if ($item['type'] === 'existing' && !empty($item['url'])) {
+                    $mediaInput[] = [
+                        'originalSource' => $item['url'],
+                        'mediaContentType' => 'IMAGE',
+                        'alt' => 'Store Media'
+                    ];
+                }
+            }
+        } else {
+            // Fallback for purely local media without explicit order (legacy compatibility)
+            foreach ($files as $file) {
+                $filename = uniqid('product-media-', true) . '.' . $file->getClientOriginalExtension();
+                $file->move($uploadDirectory, $filename);
+                $host = $request->header('X-Forwarded-Host', $request->getHost());
+                $scheme = $request->header('X-Forwarded-Proto', 'https');
+                $imageUrl = $scheme . '://' . $host . '/assets/uploads/' . $filename;
+                
+                $mediaInput[] = [
+                    'originalSource' => $imageUrl,
+                    'mediaContentType' => 'IMAGE',
+                    'alt' => $file->getClientOriginalName()
+                ];
+            }
+        }
 
         $query = <<<'GRAPHQL'
-mutation productCreate($input: ProductInput!) {
-  productCreate(input: $input) {
+mutation productCreate($input: ProductInput!, $media: [CreateMediaInput!]) {
+  productCreate(input: $input, media: $media) {
     product {
       id title handle vendor status tags
       featuredImage { url }
+      images(first: 10) { nodes { id url altText } }
       seo { title description }
       variants(first: 10) {
         nodes {
@@ -419,7 +523,10 @@ GRAPHQL;
         try {
             $response = $client->query([
                 'query' => $query,
-                'variables' => ['input' => $input],
+                'variables' => [
+                    'input' => $input,
+                    'media' => empty($mediaInput) ? null : $mediaInput
+                ],
             ]);
         } catch (\Throwable $exception) {
             report($exception);
@@ -427,9 +534,6 @@ GRAPHQL;
         }
 
         $body = $response->getDecodedBody();
-                    file_put_contents(public_path("graphql_debug.json"), json_encode(["query" => $graphqlQuery, "body" => $body]));
-                    file_put_contents("/tmp/graphql_debug.txt", json_encode($body));
-                    if (isset($body["errors"])) { \Log::error("GraphQL Body Errors: " . json_encode($body["errors"])); }
 
         if (isset($body['errors']) || !empty($body['data']['productCreate']['userErrors'])) {
             $errors = $body['errors'] ?? $body['data']['productCreate']['userErrors'];
@@ -438,6 +542,27 @@ GRAPHQL;
 
         $product = $body['data']['productCreate']['product'];
         $shopDomain = $session->getShop();
+        $variantNode = $product['variants']['nodes'][0] ?? null;
+
+        // Set Inventory Quantities
+        $quantitiesStr = $request->input('quantities');
+        $quantities = $quantitiesStr ? json_decode($quantitiesStr, true) : [];
+        if ($variantNode && !empty($quantities) && filter_var($request->input('inventoryTracked', true), FILTER_VALIDATE_BOOLEAN)) {
+            $setQuantities = [];
+            foreach ($quantities as $locId => $qty) {
+                $setQuantities[] = [
+                    'inventoryItemId' => $variantNode['inventoryItem']['id'],
+                    'locationId' => $locId,
+                    'quantity' => (int) $qty
+                ];
+            }
+            if (!empty($setQuantities)) {
+                $client->query([
+                    'query' => 'mutation inventorySet($input: InventorySetOnHandQuantitiesInput!) { inventorySetOnHandQuantities(input: $input) { userErrors { message } } }',
+                    'variables' => ['input' => ['reason' => 'correction', 'setQuantities' => $setQuantities]]
+                ]);
+            }
+        }
 
         // Update local DB cache
         DB::table('products_cache')->updateOrInsert(
@@ -449,10 +574,44 @@ GRAPHQL;
                 'status' => strtolower($product['status']),
                 'tags' => json_encode($product['tags']),
                 'image_url' => $product['featuredImage']['url'] ?? null,
+                'images_data' => json_encode($product['images']['nodes'] ?? []),
+                'meta_title' => $product['seo']['title'] ?? null,
+                'meta_description' => $product['seo']['description'] ?? null,
                 'updated_at' => now(),
                 'created_at' => now(),
             ]
         );
+        $cacheId = DB::table('products_cache')->where('shop_domain', $shopDomain)->where('product_gid', $product['id'])->value('id');
+
+        if ($variantNode) {
+            DB::table('variants_cache')->updateOrInsert(
+                ['product_cache_id' => $cacheId, 'variant_gid' => $variantNode['id']],
+                [
+                    'title' => $variantNode['title'],
+                    'sku' => $variantNode['sku'],
+                    'price' => $variantNode['price'],
+                    'inventory_item_id' => $variantNode['inventoryItem']['id'],
+                    'updated_at' => now(),
+                    'created_at' => now(),
+                ]
+            );
+            $variantCacheId = DB::table('variants_cache')->where('variant_gid', $variantNode['id'])->value('id');
+            
+            if (!empty($quantities) && filter_var($request->input('inventoryTracked', true), FILTER_VALIDATE_BOOLEAN)) {
+                foreach ($quantities as $locId => $qty) {
+                    DB::table('inventory_cache')->updateOrInsert(
+                        ['product_cache_id' => $cacheId, 'location_gid' => $locId],
+                        [
+                            'variant_cache_id' => $variantCacheId,
+                            'location_name' => 'Location',
+                            'available' => (int) $qty,
+                            'updated_at' => now(),
+                            'created_at' => now(),
+                        ]
+                    );
+                }
+            }
+        }
 
         return response()->json(['message' => 'Product created successfully', 'product' => $product]);
     });
@@ -463,6 +622,16 @@ GRAPHQL;
         $shopDomain = $session->getShop();
         $cursor = null;
         $synced = 0;
+        $seenProductGids = [];
+        $jobId = DB::table('bulk_jobs')->insertGetId([
+            'shop_domain' => $shopDomain,
+            'job_name' => 'Catalog Sync (Pull)',
+            'job_type' => 'Catalog Sync',
+            'status' => 'Running',
+            'started_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
 
         do {
             try {
@@ -474,11 +643,13 @@ query ProductSync($cursor: String) {
     nodes {
       id title handle vendor status tags
       featuredImage { url }
+      images(first: 10) { nodes { id url altText } }
       seo { title description }
-                            publications(first: 10) { nodes { channel { name } } }
-                            testing: metafield(namespace: "custom", key: "testing") { value }
-                            productCategory { productTaxonomyNode { fullName } }
-            variants(first: 50) {
+      metafields(first: 20) { nodes { id namespace key value type } }
+      collections(first: 10) { nodes { id title } }
+      publications(first: 10) { nodes { channel { name } } }
+      productCategory { productTaxonomyNode { fullName } }
+      variants(first: 50) {
                 nodes {
                     id title sku price
                     inventoryItem {
@@ -508,11 +679,13 @@ GRAPHQL,
             $body = HttpResponse::fromResponse($response)->getDecodedBody();
 
             if ($response->getStatusCode() !== 200 || isset($body['errors'])) {
+                DB::table('bulk_jobs')->where('id', $jobId ?? 0)->update(['status' => 'Failed', 'error_message' => json_encode($body['errors'] ?? []), 'completed_at' => now()]);
                 return response()->json(['message' => 'Shopify catalog sync failed: ' . json_encode($body['errors'] ?? []), 'errors' => $body['errors'] ?? []], 400);
             }
 
             $connection = $body['data']['products'];
             foreach ($connection['nodes'] as $product) {
+                $seenProductGids[] = $product['id'];
                 DB::table('products_cache')->updateOrInsert(
                     ['shop_domain' => $shopDomain, 'product_gid' => $product['id']],
                     [
@@ -524,6 +697,9 @@ GRAPHQL,
                         'image_url' => $product['featuredImage']['url'] ?? null,
                         'meta_title' => $product['seo']['title'] ?? null,
                         'meta_description' => $product['seo']['description'] ?? null,
+                        'images_data' => json_encode($product['images']['nodes'] ?? []),
+                        'metafields' => json_encode($product['metafields']['nodes'] ?? []),
+                        'collections' => json_encode($product['collections']['nodes'] ?? []),
                         'updated_at' => now(),
                         'created_at' => now(),
                     ]
@@ -564,6 +740,7 @@ GRAPHQL,
             $cursor = $connection['pageInfo']['hasNextPage'] ? $connection['pageInfo']['endCursor'] : null;
         } while ($cursor !== null);
 
+        DB::table('bulk_jobs')->where('id', $jobId ?? 0)->update(['status' => 'Completed', 'records_affected' => $synced, 'progress' => 100, 'completed_at' => now()]);
         return response()->json(['message' => 'Catalog sync completed', 'synced' => $synced, 'completed_at' => now()->toIso8601String()]);
     });
 
@@ -674,6 +851,7 @@ GRAPHQL;
 
         try {
             $response = $client->query(['query' => $query]);
+            \Log::info('Taxonomy Roots Response:', $response->getDecodedBody());
             $body = $response->getDecodedBody();
                     file_put_contents(public_path("graphql_debug.json"), json_encode(["query" => $graphqlQuery, "body" => $body]));
                     file_put_contents("/tmp/graphql_debug.txt", json_encode($body));
@@ -754,7 +932,12 @@ GRAPHQL,
                             'id' => $product->product_gid,
                             'title' => $product->title,
                             'vendor' => $product->vendor,
-                            'status' => $status
+                            'status' => $status,
+                            'tags' => json_decode($product->tags, true) ?? [],
+                            'seo' => [
+                                'title' => $product->meta_title ?? '',
+                                'description' => $product->meta_description ?? ''
+                            ]
                         ]
                     ],
                 ]);
@@ -779,6 +962,45 @@ GRAPHQL,
                             ]
                         ]
                     ]);
+                    
+                    // Push Inventory
+                    $inventory = DB::table('inventory_cache')->where('variant_cache_id', $variant->id)->first();
+                    if ($inventory && $inventory->location_gid) {
+                        $client->query([
+                            'query' => 'mutation inventorySet($input: InventorySetOnHandQuantitiesInput!) { inventorySetOnHandQuantities(input: $input) { userErrors { message } } }',
+                            'variables' => [
+                                'input' => [
+                                    'reason' => 'correction',
+                                    'setQuantities' => [
+                                        [
+                                            'inventoryItemId' => $variant->inventory_item_id,
+                                            'locationId' => $inventory->location_gid,
+                                            'quantity' => (int) $inventory->available
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        ]);
+                    }
+                    
+                    // Push Image Alt Text if available
+                    if ($product->image_alt && $product->image_name) {
+                        // Assuming image_name is the media ID stored previously
+                        if (str_contains($product->image_name, 'MediaImage')) {
+                            $client->query([
+                                'query' => 'mutation productUpdateMedia($media: [UpdateMediaInput!]!, $productId: ID!) { productUpdateMedia(media: $media, productId: $productId) { userErrors { message } } }',
+                                'variables' => [
+                                    'productId' => $product->product_gid,
+                                    'media' => [
+                                        [
+                                            'id' => $product->image_name,
+                                            'alt' => $product->image_alt
+                                        ]
+                                    ]
+                                ]
+                            ]);
+                        }
+                    }
                 }
                 
                 $pushed++;
@@ -787,6 +1009,7 @@ GRAPHQL,
             }
         }
 
+        DB::table('bulk_jobs')->where('id', $jobId ?? 0)->update(['status' => 'Completed', 'records_affected' => $pushed, 'progress' => 100, 'completed_at' => now()]);
         return response()->json(['message' => 'Push sync completed successfully', 'pushed' => $pushed, 'completed_at' => now()->toIso8601String()]);
     });
 
@@ -957,5 +1180,262 @@ GRAPHQL,
         Cache::forever("settings:$shop", $settings);
 
         return response()->json($settings);
+    });
+
+    Route::get('/bulk-jobs', function (Request $request) {
+        $session = $request->get('shopifySession');
+        $query = DB::table('bulk_jobs')->where('shop_domain', $session->getShop());
+
+        if ($request->has('search') && !empty($request->search)) {
+            $query->where('job_name', 'LIKE', '%' . $request->search . '%');
+        }
+        if ($request->has('type') && !empty($request->type)) {
+            $query->where('job_type', 'LIKE', '%' . $request->type . '%');
+        }
+        if ($request->has('status') && !empty($request->status)) {
+            $query->where('status', $request->status);
+        }
+
+        return response()->json($query->orderBy('created_at', 'desc')->get());
+    });
+
+    Route::post('/bulk-jobs/{id}/retry', function (Request $request, $id) {
+        $session = $request->get('shopifySession');
+        $job = DB::table('bulk_jobs')->where('shop_domain', $session->getShop())->where('id', $id)->first();
+        if (!$job || $job->status !== 'Failed') {
+            return response()->json(['error' => 'Job not retryable'], 400);
+        }
+        
+        DB::table('bulk_jobs')->where('id', $id)->update([
+            'status' => 'Queued',
+            'error_message' => null,
+            'progress' => 0,
+            'updated_at' => now(),
+        ]);
+        
+        return response()->json(['success' => true]);
+    });
+
+    Route::post('/bulk-jobs/{id}/cancel', function (Request $request, $id) {
+        $session = $request->get('shopifySession');
+        $job = DB::table('bulk_jobs')->where('shop_domain', $session->getShop())->where('id', $id)->first();
+        if (!$job || !in_array($job->status, ['Queued', 'Running'])) {
+            return response()->json(['error' => 'Job not cancellable'], 400);
+        }
+        
+        DB::table('bulk_jobs')->where('id', $id)->update([
+            'status' => 'Cancelled',
+            'updated_at' => now(),
+        ]);
+        
+        return response()->json(['success' => true]);
+    });
+
+
+    Route::get('/sync-activity', function (Request $request) {
+        $session = $request->get('shopifySession');
+        $query = DB::table('bulk_jobs')
+            ->where('shop_domain', $session->getShop())
+            ->whereIn('job_type', ['Catalog Sync', 'Catalog Push']);
+
+        if ($request->has('direction') && !empty($request->direction)) {
+            $type = $request->direction === 'Shopify → App' ? 'Catalog Sync' : 'Catalog Push';
+            $query->where('job_type', $type);
+        }
+        if ($request->has('type') && !empty($request->type)) {
+            $query->where('job_type', 'LIKE', '%' . $request->type . '%');
+        }
+        if ($request->has('status') && !empty($request->status)) {
+            $query->where('status', $request->status);
+        }
+
+        $jobs = $query->orderBy('created_at', 'desc')->get()->map(function($job) {
+            $job->direction = $job->job_type === 'Catalog Sync' ? 'Shopify → App' : 'App → Shopify';
+            return $job;
+        });
+
+        return response()->json($jobs);
+    });
+
+    Route::get('/locations', function (Request $request) {
+        $session = $request->get('shopifySession');
+        $client = new Graphql($session->getShop(), $session->getAccessToken());
+
+        try {
+            $response = $client->query([
+                'query' => '{ locations(first: 50) { nodes { id name } } }',
+            ]);
+            $body = $response->getDecodedBody();
+            return response()->json($body['data']['locations']['nodes'] ?? []);
+        } catch (\Throwable $exception) {
+            return response()->json(['error' => 'Failed to fetch locations'], 500);
+        }
+    });
+
+    Route::get('/store-media', function (Request $request) {
+        $session = $request->get('shopifySession');
+        $client = new Graphql($session->getShop(), $session->getAccessToken());
+        $search = $request->query('query');
+        
+        $queryStr = $search ? "filename:*$search*" : null;
+        
+        $query = <<<'GRAPHQL'
+query GetStoreMedia($query: String) {
+  files(first: 50, query: $query) {
+    nodes {
+      ... on MediaImage {
+        id
+        alt
+        image { url }
+      }
+    }
+  }
+}
+GRAPHQL;
+
+        try {
+            $response = $client->query([
+                'query' => $query,
+                'variables' => ['query' => $queryStr]
+            ]);
+            $body = $response->getDecodedBody();
+            $nodes = $body['data']['files']['nodes'] ?? [];
+            
+            $media = [];
+            foreach ($nodes as $node) {
+                if (isset($node['image']['url'])) {
+                    $media[] = [
+                        'id' => $node['id'],
+                        'url' => $node['image']['url'],
+                        'alt' => $node['alt'] ?? ''
+                    ];
+                }
+            }
+            return response()->json(['data' => $media]);
+        } catch (\Throwable $exception) {
+            report($exception);
+            return response()->json(['error' => 'Failed to fetch store media'], 500);
+        }
+    });
+
+    Route::get('/test-taxonomy', function (Request $request) {
+        $session = $request->get('shopifySession');
+        $client = new Graphql($session->getShop(), $session->getAccessToken());
+        
+        $query = <<<'GRAPHQL'
+query {
+  __type(name: "ProductTaxonomyNode") {
+    name
+    fields {
+      name
+    }
+  }
+}
+GRAPHQL;
+
+        $response = $client->query(['query' => $query]);
+            \Log::info('Taxonomy Roots Response:', $response->getDecodedBody());
+        return response()->json($response->getDecodedBody());
+    });
+
+    
+    Route::get('/taxonomy', function (Request $request) {
+        $session = $request->get('shopifySession');
+        $client = new Graphql($session->getShop(), $session->getAccessToken());
+        
+        $search = $request->query('query');
+        $parentId = $request->query('parentId');
+        
+        if ($search) {
+            $query = <<<'GRAPHQL'
+query GetTaxonomySearch($search: String!) {
+  taxonomy {
+    categories(first: 50, search: $search) {
+      edges {
+        node {
+          id
+          name
+          fullName
+          isLeaf
+          isRoot
+        }
+      }
+    }
+  }
+}
+GRAPHQL;
+            $variables = ['search' => $search];
+            $response = $client->query(['query' => $query, 'variables' => $variables]);
+        } else if ($parentId) {
+            $query = <<<'GRAPHQL'
+query GetTaxonomyChildren($id: ID!) {
+  taxonomy {
+    categories(first: 50, childrenOf: $id) {
+      edges {
+        node {
+          id
+          name
+          fullName
+          isLeaf
+          isRoot
+        }
+      }
+    }
+  }
+}
+GRAPHQL;
+            $variables = ['id' => $parentId];
+            $response = $client->query(['query' => $query, 'variables' => $variables]);
+        } else {
+            // Fetch roots (top-level categories)
+            // wait, we can't do `is_root:true` anymore. How to fetch roots?
+            // "search" or "childrenOf" or what?
+            // Let's just fetch without arguments, by default it might return roots? Or maybe we have to pass something.
+            $query = <<<'GRAPHQL'
+query GetTaxonomyRoots {
+  taxonomy {
+    categories(first: 100) {
+      edges {
+        node {
+          id
+          name
+          fullName
+          isLeaf
+          isRoot
+        }
+      }
+    }
+  }
+}
+GRAPHQL;
+            $response = $client->query(['query' => $query]);
+            $body = $response->getDecodedBody();
+            // Filter only roots if API returns all
+            if (isset($body['data']['taxonomy']['categories']['edges'])) {
+                $body['data']['taxonomy']['categories']['edges'] = array_values(array_filter(
+                    $body['data']['taxonomy']['categories']['edges'],
+                    function ($edge) { return $edge['node']['isRoot'] === true; }
+                ));
+            }
+            return response()->json($body);
+        }
+        
+        return response()->json($response->getDecodedBody());
+    });
+
+    Route::get('/shop-settings', function (Request $request) {
+        $session = $request->get('shopifySession');
+        $client = new Graphql($session->getShop(), $session->getAccessToken());
+        
+        $query = <<<'GRAPHQL'
+query {
+  shop {
+    currencyCode
+  }
+}
+GRAPHQL;
+        $response = $client->query(['query' => $query]);
+        $body = $response->getDecodedBody();
+        return response()->json(['currencyCode' => $body['data']['shop']['currencyCode'] ?? 'USD']);
     });
 });

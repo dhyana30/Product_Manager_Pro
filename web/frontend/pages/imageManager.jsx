@@ -1,4 +1,5 @@
 import { ErrorBoundary } from "../components/ErrorBoundary";
+import { useNavigate } from "react-router-dom";
 import React, { useState } from 'react';
 import {
   Page,
@@ -415,12 +416,11 @@ function ImageManagerContent() {
 
   if (isBulkEditing) {
     return (
-      <Page fullWidth>
-        <TitleBar title="Bulk edit images" />
+      <Page fullWidth title="Bulk edit images" backAction={{ content: "Image Manager", onAction: () => setIsBulkEditing(false) }}>
         <div style={{ padding: '20px 0' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '20px', flexWrap: 'wrap' }}>
             <div>
-              <Button plain onClick={() => setIsBulkEditing(false)}>Back to Image Manager</Button>
+              
               <div style={{ marginTop: '8px' }}>
                 <Text variant="headingLg">Bulk edit image metadata</Text>
                 <Text variant="bodyMd" color="subdued">Update the name and ALT text for each selected product.</Text>
@@ -476,10 +476,9 @@ function ImageManagerContent() {
 
   if (isUploadPageOpen) {
     return (
-      <Page fullWidth>
-        <TitleBar title="Upload image" />
+      <Page fullWidth title="Upload image" backAction={{ content: "Image Manager", onAction: () => setIsUploadPageOpen(false) }}>
         <div style={{ maxWidth: '960px', margin: '0 auto', padding: '24px 0' }}>
-          <Button plain icon={ArrowLeftMinor} accessibilityLabel="Back to Image Manager" onClick={() => setIsUploadPageOpen(false)} />
+          
           <div style={{ margin: '16px 0 24px' }}>
             <Text variant="headingLg">Upload product image</Text>
             <Text variant="bodyMd" color="subdued">Select an existing product, then upload an image for it.</Text>
@@ -883,6 +882,7 @@ function FilterPopover(props) {
 
 
 export default function ImageManager() {
+  const navigate = useNavigate();
   return (
     <ErrorBoundary>
       <ImageManagerContent />
