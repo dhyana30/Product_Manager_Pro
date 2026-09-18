@@ -52,7 +52,7 @@ Route::middleware('shopify.auth')->group(function () {
             'HEALTH_SCORE' => [
                 'value' => $healthScoreValue,
                 'label' => $healthScoreValue > 80 ? 'Good' : ($healthScoreValue > 50 ? 'Fair' : 'Poor'),
-                'summary' => "Your catalog health is " . ($healthScoreValue > 80 ? 'good' : 'needs improvement') . ".",
+                'summary' => "Your catalog health " . ($healthScoreValue > 80 ? 'is good' : 'needs improvement') . ".",
                 'detail' => "Keep going! $healthScoreValue% of your catalog meets quality and completeness standards.",
             ],
             'KPIS' => [
@@ -145,6 +145,7 @@ Route::middleware('shopify.auth')->group(function () {
                             handle
                             seo { title description }
                             media(first: 1) { nodes { preview { image { url } } } }
+                            collections(first: 10) { nodes { title } }
                             publications(first: 10) { nodes { channel { name } } }
                             category: metafield(namespace: "custom", key: "category") { value }
                             z8_offers: metafield(namespace: "custom", key: "z8_offers") { value }
@@ -270,7 +271,7 @@ GRAPHQL;
             return [
                 'id' => $product->id,
                 'title' => $rt['title'] ?? $product->title,
-                'description' => isset($rt['descriptionHtml']) ? strip_tags($rt['descriptionHtml']) : '',
+                'description' => $rt['descriptionHtml'] ?? '',
                 'product_type' => $rt['productType'] ?? ($product->product_type ?? '—'),
                 'product_category' => $rt['productCategory']['productTaxonomyNode']['fullName'] ?? '—',
                 'testing' => (isset($rt['testing']['value']) && $rt['testing']['value'] === 'true') ? 'true' : 'false',
@@ -278,6 +279,7 @@ GRAPHQL;
                 'vendor' => $rt['vendor'] ?? ($product->vendor ?: '—'),
                 'status' => isset($rt['status']) ? strtolower($rt['status']) : $product->status,
                 'tags' => $rt['tags'] ?? ($product->tags ? json_decode($product->tags, true) : []),
+                'collections' => isset($rt['collections']['nodes']) ? array_map(fn($c) => $c['title'], $rt['collections']['nodes']) : [],
                 'template' => $rt['templateSuffix'] ?? 'product',
                 'published_at' => ($rt['publishedAt'] ?? null) ? date('Y-m-d', strtotime($rt['publishedAt'])) : ( (isset($rt['status']) && $rt['status'] === 'ACTIVE') || strtolower($product->status) === 'active' ? (isset($rt['createdAt']) ? date('Y-m-d', strtotime($rt['createdAt'])) : '') : '' ),
                 'handle' => $rt['handle'] ?? $product->handle,

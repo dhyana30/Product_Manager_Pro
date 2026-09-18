@@ -84,6 +84,7 @@ const SORT_OPTIONS = [
 ];
 
 export default function Catalog() {
+  const navigate = useNavigate();
   
   const [query, setQuery] = useState("");
   const [products, setProducts] = useState([]);
@@ -238,8 +239,7 @@ export default function Catalog() {
 
   
   const handleStartEdit = (row) => {
-    setEditingId(row.id);
-    setEditData({ title: row.title, vendor: row.vendor, price: row.price, sku: row.sku });
+    navigate(`/product/${row.id}`, { state: { product: row } });
   };
   const handleCancelEdit = () => {
     setEditingId(null);
@@ -628,7 +628,7 @@ function ProductRow({ row, index, columns, selected, isEditing, editData, onEdit
               </div>
             </div>
           )}
-          {col.key === "variants" && <Text as="span" color="subdued">{row.variants || "—"}</Text>}
+          {col.key === "variants" && <Text as="span" color="subdued">{row.variants_list ? row.variants_list.length : "—"}</Text>}
           {col.key === "status" && (
             <Badge status={row.status?.status || 'success'}>{row.status?.label || row.status}</Badge>
           )}

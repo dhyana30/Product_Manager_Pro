@@ -133,40 +133,37 @@ export default function HomePage() {
         <div>
           <div style={{ marginTop: 4 }}>
             <Text as="p" color="subdued">
-              Catalog health, activity, and AI usage — last updated 10:15 AM
+              Overview of your catalog health, activity, and AI usage.
             </Text>
           </div>
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '16px' }}>
-      {/* Top Section */}
       <div className="pmp-grid" style={s.grid}>
-        <div className="stretch-card-container" style={{ ...s.colOneThird }}>
+        <div style={s.colOneThird}>
           <HealthScoreCard data={data.HEALTH_SCORE} />
         </div>
-        <div style={{ ...s.colTwoThirds, display: "flex", flexDirection: "column", gap: "16px", minWidth: 0 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "16px" }}>
-            {data.KPIS && data.KPIS.map(kpi => <KpiMiniCard key={kpi.label} kpi={kpi} />)}
-          </div>
-          <div className="stretch-card-container" style={{ flexGrow: 1, minHeight: 0 }}><SyncActivityCard data={data.SYNC_ACTIVITY} /></div>
+        <div style={s.colTwoThirds}>
+          <KpiCard data={data.KPIS} />
         </div>
       </div>
 
-      {/* Bottom Section */}
       <div className="pmp-grid-half" style={s.gridHalf}>
-        <div className="stretch-card-container" style={{ minWidth: 0 }}>
+        <div style={{ minWidth: 0 }}>
           <BulkJobsCard data={data.BULK_JOBS} />
         </div>
-        <div className="stretch-card-container" style={{ minWidth: 0 }}>
-          <ExportCard navigate={navigate} />
+        <div style={{ minWidth: 0 }}>
+          <SyncActivityCard data={data.SYNC_ACTIVITY} />
         </div>
       </div>
-    </div>
+
+      <div style={{ marginBottom: 16 }}>
+        <ExportCard navigate={navigate} />
+      </div>
 
       <div style={s.footnote}>
         <Text as="p" color="subdued">
-          All times are shown in your local timezone.
+          All times are in your local timezone.
         </Text>
       </div>
     </Page>
@@ -181,24 +178,38 @@ function HealthScoreCard({ data }) {
   if (!data) return null;
   return (
     <Card>
-      <div style={{ padding: "40px 20px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", flexGrow: 1, justifyContent: "center" }}>
-        <HealthRing value={data.value} />
-        <div style={{ marginTop: "24px" }}>
-          <Text as="h2" variant="headingMd" color="warning">Needs attention</Text>
-          <div style={{ marginTop: "4px" }}>
-            <Text as="p" color="subdued" variant="bodySm">54 products below standard</Text>
+      <div style={s.pad}>
+        <Stack alignment="center" distribution="equalSpacing">
+          <Text as="h2" variant="headingMd">
+            Catalog Health Score
+          </Text>
+          <Tooltip content="Calculated from completeness, data quality, images, SEO, and variant health.">
+            <span style={{ color: "#8a8f96" }}>
+              <IconInfo />
+            </span>
+          </Tooltip>
+        </Stack>
+
+        <div style={s.healthRow}>
+          <HealthRing value={data.value} label={data.label} />
+          <div>
+            <Text as="p" fontWeight="semibold">
+              {data.summary}
+            </Text>
+            <div style={{ marginTop: 4, marginBottom: 12 }}>
+              <Text as="p" color="subdued">
+                {data.detail}
+              </Text>
+            </div>
+            <LinkButton label="View health details" />
           </div>
         </div>
-        <div style={{ marginTop: "16px", marginBottom: "24px", maxWidth: "240px" }}>
-          <Text as="p" color="subdued">Keep going — {data.value}% of your catalog meets quality and completeness standards.</Text>
-        </div>
-        <span style={{ color: "#008060", fontWeight: 500, cursor: "pointer", fontSize: "14px" }}>View health details &rarr;</span>
       </div>
     </Card>
   );
 }
 
-function HealthRing({ value, size = 160, stroke = 12 }) {
+function HealthRing({ value, label, size = 120, stroke = 10 }) {
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference * (1 - value / 100);
@@ -212,16 +223,20 @@ function HealthRing({ value, size = 160, stroke = 12 }) {
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke="#f4a261"
+          stroke="#008060"
           strokeWidth={stroke}
           strokeLinecap="round"
           strokeDasharray={circumference}
           strokeDashoffset={offset}
         />
       </svg>
-      <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "row", gap: "2px" }}>
-        <div style={{ fontSize: '36px', fontWeight: 'bold' }}>{value}</div>
-        <div style={{ fontSize: '14px', color: '#8a8f96', marginTop: '8px' }}>/100</div>
+      <div style={s.ringLabel}>
+        <Text as="span" variant="heading2xl">
+          {value}
+        </Text>
+        <Text as="span" color="success" fontWeight="semibold">
+          {label}
+        </Text>
       </div>
     </div>
   );
@@ -231,36 +246,47 @@ function HealthRing({ value, size = 160, stroke = 12 }) {
 // Catalog Health KPIs
 // ---------------------------------------------------------------------------
 
-function KpiMiniCard({ kpi }) {
-  let badgeText = '';
-  let badgeTone = 'success';
-  let title = kpi.label;
-  let dotColor = '#000';
-  
-  if (kpi.label.includes('Total') && !kpi.label.includes('Inventory')) { 
-      badgeText = 'catalog size'; title = 'Total products'; dotColor = '#7A62FF';
-  }
-  else if (kpi.label.includes('Active')) { 
-      badgeText = '98% of catalog'; title = 'Active products'; dotColor = '#00D1B2';
-  }
-  else if (kpi.label.includes('Draft')) { 
-      badgeText = 'needs review'; badgeTone = 'critical'; title = 'Draft products'; dotColor = '#FF5C8D';
-  }
-  else if (kpi.label.includes('Inventory')) { 
-      badgeText = 'units on hand'; badgeTone = 'warning'; title = 'Total inventory'; dotColor = '#FFC900';
-  }
-
+function KpiCard({ data }) {
+  if (!data) return null;
   return (
     <Card>
-      <div style={{ padding: "16px" }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text as="p" color="subdued" variant="bodyMd">{title}</Text>
-          <div style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: dotColor }} />
+      <div style={s.pad}>
+        <Stack alignment="center" distribution="equalSpacing">
+          <Text as="h2" variant="headingMd">
+            Catalog Health KPIs
+          </Text>
+          <Text as="span" color="subdued">
+            Last updated: 10:15 AM
+          </Text>
+        </Stack>
+
+        <div style={s.kpiGrid}>
+          {data.map((kpi) => (
+            <div key={kpi.label} style={s.kpiTile}>
+              <Text as="p" color="subdued">
+                {kpi.label}
+              </Text>
+              <div style={{ margin: "6px 0 2px" }}>
+                <Text as="p" variant="headingLg">
+                  {kpi.value}
+                </Text>
+              </div>
+              {kpi.change && (
+                <>
+                  <span style={s.trend}>
+                    <IconTrendUp />
+                    {kpi.change}
+                  </span>
+                  <div style={{ marginTop: 2 }}>
+                    <Text as="p" color="subdued">
+                      vs last 7 days
+                    </Text>
+                  </div>
+                </>
+              )}
+            </div>
+          ))}
         </div>
-        <div style={{ marginTop: "4px", marginBottom: "8px" }}>
-          <Text as="p" variant="headingXl">{kpi.value}</Text>
-        </div>
-        {badgeText && <Badge status={badgeTone}>{badgeText}</Badge>}
       </div>
     </Card>
   );
@@ -271,16 +297,17 @@ function KpiMiniCard({ kpi }) {
 // ---------------------------------------------------------------------------
 
 function BulkJobsCard({ data }) {
-  const padStyle = { ...s.pad, flexGrow: 1, display: 'flex', flexDirection: 'column' };
   const navigate = useNavigate();
   if (!data) return null;
   return (
     <Card>
-      <div style={padStyle}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <Text as="h2" variant="headingMd">Recent bulk jobs</Text>
-          <span style={{ color: "#008060", fontWeight: 500, cursor: "pointer", fontSize: "14px" }} onClick={() => navigate("/bulk-jobs")}>View all bulk jobs &rarr;</span>
-        </div>
+      <div style={s.pad}>
+        <Stack alignment="center" distribution="equalSpacing">
+          <Text as="h2" variant="headingMd">
+            Recent Bulk Jobs
+          </Text>
+          <Button plain onClick={() => navigate("/bulk-jobs")}>View all bulk jobs</Button>
+        </Stack>
       </div>
 
       <div style={s.tableHead}>
@@ -304,21 +331,16 @@ function BulkJobsCard({ data }) {
       <Divider />
 
       {data.length === 0 ? (
-        <div style={{ padding: "48px 20px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", flexGrow: 1 }}>
-          <div style={{ width: 40, height: 40, borderRadius: "8px", backgroundColor: "#f4f6f8", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}>
-            <span style={{ fontSize: 20, color: "#8a8f96" }}>+</span>
-          </div>
-          <Text as="p" fontWeight="bold">No recent bulk jobs</Text>
-          <div style={{ marginTop: 4 }}>
-            <Text as="p" color="subdued">Start one from the product grid</Text>
-          </div>
+        <div style={{ padding: "32px 20px", textAlign: "center" }}>
+          <Text as="p" color="subdued">No recent bulk jobs</Text>
         </div>
       ) : (
         data.map((job, i) => (
           <BulkJobRow key={job.id || i} job={job} isLast={i === data.length - 1} />
         ))
       )}
-    </Card>
+
+      </Card>
   );
 }
 
@@ -368,15 +390,17 @@ function SyncActivityCard({ data }) {
   return (
     <Card>
       <div style={s.pad}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <Text as="h2" variant="headingMd">Sync activity</Text>
-          <span style={{ color: "#008060", fontWeight: 500, cursor: "pointer", fontSize: "14px" }} onClick={() => navigate("/sync-activity")}>View all activity &rarr;</span>
-        </div>
+        <Stack alignment="center" distribution="equalSpacing">
+          <Text as="h2" variant="headingMd">
+            Sync Activity
+          </Text>
+          <Button plain onClick={() => navigate("/sync-activity")}>View all activity</Button>
+        </Stack>
       </div>
 
       <div style={s.tableHead}>
         <span style={s.colJob}>
-          <Text as="span" color="subdued">Sync type</Text>
+          <Text as="span" color="subdued">Sync Type</Text>
         </span>
         <span style={s.colType}>
           <Text as="span" color="subdued">Direction</Text>
@@ -395,14 +419,8 @@ function SyncActivityCard({ data }) {
       <Divider />
 
       {data.length === 0 ? (
-        <div style={{ padding: "48px 20px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", flexGrow: 1 }}>
-          <div style={{ width: 40, height: 40, borderRadius: "8px", backgroundColor: "#f4f6f8", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}>
-            <span style={{ fontSize: 18, color: "#8a8f96" }}>↻</span>
-          </div>
-          <Text as="p" fontWeight="bold">No recent sync activity</Text>
-          <div style={{ marginTop: 4 }}>
-            <Text as="p" color="subdued">Connected channels will appear here once they sync</Text>
-          </div>
+        <div style={{ padding: "32px 20px", textAlign: "center" }}>
+          <Text as="p" color="subdued">No recent sync activity</Text>
         </div>
       ) : (
         data.map((job, i) => (
@@ -418,7 +436,6 @@ function SyncActivityCard({ data }) {
 // ---------------------------------------------------------------------------
 
 function ExportCard({ navigate }) {
-  const padStyle = { ...s.pad, display: 'flex', flexDirection: 'column', flexGrow: 1 };
   const [data, setData] = useState([]);
   useEffect(() => {
     try {
@@ -434,24 +451,18 @@ function ExportCard({ navigate }) {
 
   return (
     <Card>
-      <div style={padStyle}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <Text as="h2" variant="headingMd">Export status</Text>
-          <span style={{ color: "#008060", fontWeight: 500, cursor: "pointer", fontSize: "14px" }} onClick={() => navigate("/export")}>Manage exports &rarr;</span>
-        </div>
+      <div style={s.pad}>
+        <Stack alignment="center" distribution="equalSpacing">
+          <Text as="h2" variant="headingMd">
+            Export Status
+          </Text>
+          <LinkButton label="Manage exports" onClick={() => navigate('/export')} />
+        </Stack>
 
-        <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', marginTop: 12 }}>
+        <div style={{ marginTop: 12 }}>
           {data.length === 0 ? (
-            <div style={{ padding: "48px 0", display: "flex", flexDirection: "row", alignItems: "center" }}>
-              <div style={{ width: 40, height: 40, borderRadius: "8px", backgroundColor: "#f4f6f8", display: "flex", alignItems: "center", justifyContent: "center", marginRight: 16, flexShrink: 0 }}>
-                <span style={{ fontSize: 18, color: "#8a8f96" }}>↓</span>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column" }}>
-                <Text as="p" fontWeight="bold">No recent export activity</Text>
-                <div style={{ marginTop: 4 }}>
-                  <Text as="p" color="subdued">Your last export will show status and record count here</Text>
-                </div>
-              </div>
+            <div style={{ padding: "16px 0", textAlign: "center" }}>
+              <Text as="p" color="subdued">No recent export activity</Text>
             </div>
           ) : (
             data.map((row, i) => {
@@ -487,7 +498,6 @@ function ExportCard({ navigate }) {
     </Card>
   );
 }
-
 // ---------------------------------------------------------------------------
 // Shared bits
 // ---------------------------------------------------------------------------

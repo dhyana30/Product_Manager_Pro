@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import {
   Page,
   Layout,
@@ -22,8 +22,8 @@ import {
 import { CirclePlusMinor, EditMinor , ChevronUpMinor, ChevronDownMinor, SelectMinor, InfoMinor, SearchMinor, HorizontalDotsMinor, DragHandleMinor, TickMinor, DeleteMinor, ExportMinor, ImportMinor, DynamicSourceMinor } from '@shopify/polaris-icons';
 import { TitleBar } from '@shopify/app-bridge-react';
 import JoditEditor from 'jodit-react';
-import { FileSelectorModal, CategoryPicker } from '../components';
-import { useAuthenticatedFetch } from '../hooks';
+import { FileSelectorModal, CategoryPicker } from '../../components';
+import { useAuthenticatedFetch } from '../../hooks';
 
 const allCountries = [
   {
@@ -976,8 +976,20 @@ const allCountries = [
   }
 ];
 
-export default function ProductCreate() {
+function ProductEdit() {
+  const { id } = useParams();
+  const location = useLocation();
+  const product = location.state?.product || null;
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const handleError = (e) => {
+      fetch('/api/log', { method: 'POST', body: e.message || e.toString() }).catch(()=>{});
+    };
+    window.addEventListener('error', handleError);
+    return () => window.removeEventListener('error', handleError);
+  }, []);
+
   const fetch = useAuthenticatedFetch();
 
   const [inventoryTracked, setInventoryTracked] = useState(true);
@@ -1128,6 +1140,36 @@ export default function ProductCreate() {
   const [seoExpanded, setSeoExpanded] = useState(false);
   const [seoTitle, setSeoTitle] = useState('');
   const [seoDescription, setSeoDescription] = useState('');
+  const [imageUrl, setImageUrl] = useState('');
+
+  useEffect(() => {
+    if (product) {
+      setTitle(product.title || '');
+      setDescription(product.description || '');
+      setVendor((product.vendor && product.vendor !== '—') ? product.vendor : 'None');
+      setStatus((typeof product.status === 'object' ? product.status.label : product.status)?.toUpperCase() || 'ACTIVE');
+      setProductType((product.product_type && product.product_type !== '—') ? product.product_type : 'None');
+      setSku(product.sku || '');
+      setPrice(product.price || '');
+      setCompareAtPrice(product.compare_at_price || '');
+      setCostPerItem(product.cost_per_item || '');
+      setBarcodesList([{ value: product.barcode || '', type: 'Custom' }]);
+      if (product.collections) setSelectedCollections(Array.isArray(product.collections) ? product.collections : []);
+      if (product.product_category && product.product_category !== '—') setCategory(product.product_category);
+      setWeight(product.weight || '');
+      setSeoUrl(product.handle || '');
+      setSeoTitle(product.meta_title || '');
+      setSeoDescription(product.meta_description || '');
+      setImageUrl(product.image_url || '');
+      if (product.tags) {
+        setSelectedTags(Array.isArray(product.tags) ? product.tags : [product.tags]);
+      }
+    } else {
+      console.log('No product data passed. Redirecting...', {isError: true});
+      setTimeout(() => navigate('/catalog'), 2000);
+    }
+  }, [product]);
+
   const [seoUrl, setSeoUrl] = useState('products/');
 
   const availablePurchaseOptions = [
@@ -1169,43 +1211,43 @@ export default function ProductCreate() {
   };
   const [isSaving, setIsSaving] = useState(false);
 
-  const handleSave = async () => {
+    const handleSave = async () => {
     setIsSaving(true);
     try {
-      const response = await fetch('/api/products/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title,
-          description: descriptionRef.current,
-          vendor,
-          productType,
-          category,
-          status,
-          price,
-          sku,
-          weight,
-          compareAtPrice,
-          costPerItem,
-          taxable,
-          unitPriceMeasurement: (showUnitPrice && unitTotalAmount && unitBaseMeasure) ? {
-            measuredType: 'WEIGHT',
-            quantityValue: unitTotalAmount,
-            quantityUnit: unitBaseUnit,
-            referenceValue: unitBaseMeasure,
-            referenceUnit: unitBaseUnit
-          } : null,
-          mediaOrder
-        }),
+      const payload = {
+        title,
+        description: descriptionRef.current,
+        vendor,
+        productType,
+        status: status.toLowerCase(),
+        tags: selectedTags,
+        handle: seoUrl,
+        seoTitle,
+        seoDescription,
+        price,
+        compare_at_price: compareAtPrice,
+        cost_per_item: costPerItem,
+        sku,
+        barcode: barcodesList[0]?.value || '',
+        weight
+      };
+
+      const response = await fetch(`/api/products/p_${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
       });
 
       if (!response.ok) {
-        throw new Error('Failed to create product');
+        throw new Error('Failed to update product');
       }
 
+      console.log('Product updated successfully');
       navigate('/catalog');
     } catch (error) {
-      console.error(error);
+      console.error('Error saving product:', error);
     } finally {
       setIsSaving(false);
     }
@@ -1214,7 +1256,7 @@ export default function ProductCreate() {
   return (
     <Page
       backAction={{ content: 'Products', onAction: () => navigate('/catalog') }}
-      title="Add product"
+      title={product ? `Edit ${product.title}` : "Edit product"}
       primaryAction={{
         content: 'Save',
         onAction: handleSave,
@@ -1265,17 +1307,19 @@ export default function ProductCreate() {
             </Card>
 
             <Card title="Media" sectioned>
-              <DropZone onDrop={() => {}}>
-                <div style={{ padding: '24px 0', textAlign: 'center' }}>
-                  <div style={{ marginBottom: '8px' }}>
-                    <Text variant="bodyMd" as="p" color="subdued">Accepts images, videos, or 3D models</Text>
+              <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                {imageUrl && (
+                  <div style={{ width: '120px', height: '120px', border: '1px solid #dfe3e8', borderRadius: '8px', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <img src={imageUrl} alt="Product Media" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'cover' }} />
                   </div>
-                  <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '16px' }}>
-                    <Button onClick={(e) => e.stopPropagation()}>Add images</Button>
-                    <Button onClick={(e) => { e.stopPropagation(); setStoreMediaModalOpen(true); }}>Select existing</Button>
-                  </div>
+                )}
+                <div 
+                  style={{ width: '120px', height: '120px', border: '1px dashed #c9cccf', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', backgroundColor: '#fafbfb' }}
+                  onClick={() => setStoreMediaModalOpen(true)}
+                >
+                  <Icon source={CirclePlusMinor} color="subdued" />
                 </div>
-              </DropZone>
+              </div>
             </Card>
 
             <Card title="Category" sectioned>
@@ -3321,5 +3365,36 @@ export default function ProductCreate() {
         </div>
       )}
     </Page>
+  );
+}
+
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: '20px', color: 'red', background: '#fee' }}>
+          <h2>Something went wrong in Edit Product!</h2>
+          <pre>{this.state.error && this.state.error.toString()}</pre>
+          <pre>{this.state.error && this.state.error.stack}</pre>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function ProductEditWrapper() {
+  return (
+    <ErrorBoundary>
+      <ProductEdit />
+    </ErrorBoundary>
   );
 }

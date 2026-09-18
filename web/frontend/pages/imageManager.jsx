@@ -389,11 +389,6 @@ function ImageManagerContent() {
           </IndexTable.Cell>
           <IndexTable.Cell>
             <div style={{ textAlign: 'center' }}>
-              <Text variant="bodyMd" color={missingImages > 0 ? 'critical' : 'subdued'}>{missingImages}</Text>
-            </div>
-          </IndexTable.Cell>
-          <IndexTable.Cell>
-            <div style={{ textAlign: 'center' }}>
               <Text variant="bodyMd" color={duplicates !== '-' ? 'critical' : 'subdued'}>{duplicates}</Text>
             </div>
           </IndexTable.Cell>
@@ -631,7 +626,6 @@ function ImageManagerContent() {
               { title: 'Product' },
               { title: 'Image Count' },
               { title: 'ALT Complete', alignment: 'center' },
-              { title: 'Missing Images', alignment: 'center' },
               { title: 'Duplicates', alignment: 'center' },
               { title: 'Status' },
               { title: 'Last Updated' },

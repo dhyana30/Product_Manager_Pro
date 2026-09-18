@@ -489,65 +489,26 @@ function SeoManagerContent() {
 
 
       <div style={{ marginTop: '24px' }}>
-        <div style={{ display: 'flex', gap: '20px' }}>
-          {/* SEO Health Score Card Removed */}
-
-          <div style={{ width: '160px' }}>
-            <Card>
-              <div style={{ padding: '16px' }}>
-                <Text variant="bodySm" fontWeight="bold">Good</Text>
-                <div style={{ marginTop: '12px' }}>
-                  <Text variant="heading3xl" color="success">{kpiData.goodCount}</Text>
-                </div>
-                <div style={{ marginTop: '8px' }}>
-                  <Text variant="bodySm" color="subdued">{kpiData.goodPercent}% of products</Text>
-                </div>
-              </div>
-            </Card>
+        <Card>
+          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '20px' }}>
+            <div style={{ flex: 1, textAlign: 'center', borderRight: '1px solid #dfe3e8' }}>
+              <Text variant="bodySm" color="subdued">Good</Text>
+              <Text variant="headingXl">{isLoading ? '-' : kpiData.goodCount}</Text>
+            </div>
+            <div style={{ flex: 1, textAlign: 'center', borderRight: '1px solid #dfe3e8' }}>
+              <Text variant="bodySm" color="subdued">Issues</Text>
+              <Text variant="headingXl">{isLoading ? '-' : kpiData.issuesCount}</Text>
+            </div>
+            <div style={{ flex: 1, textAlign: 'center', borderRight: '1px solid #dfe3e8' }}>
+              <Text variant="bodySm" color="subdued">Critical Issues</Text>
+              <Text variant="headingXl">{isLoading ? '-' : kpiData.criticalCount}</Text>
+            </div>
+            <div style={{ flex: 1, textAlign: 'center' }}>
+              <Text variant="bodySm" color="subdued">No Meta Description</Text>
+              <Text variant="headingXl">{isLoading ? '-' : kpiData.noMetaDescCount}</Text>
+            </div>
           </div>
-
-          <div style={{ width: '160px' }}>
-            <Card>
-              <div style={{ padding: '16px' }}>
-                <Text variant="bodySm" fontWeight="bold">Issues</Text>
-                <div style={{ marginTop: '12px' }}>
-                  <Text variant="heading3xl" color="warning">{kpiData.issuesCount}</Text>
-                </div>
-                <div style={{ marginTop: '8px' }}>
-                  <Text variant="bodySm" color="subdued">{kpiData.issuesPercent}% of products</Text>
-                </div>
-              </div>
-            </Card>
-          </div>
-
-          <div style={{ width: '160px' }}>
-            <Card>
-              <div style={{ padding: '16px' }}>
-                <Text variant="bodySm" fontWeight="bold">Critical Issues</Text>
-                <div style={{ marginTop: '12px' }}>
-                  <Text variant="heading3xl" color="critical">{kpiData.criticalCount}</Text>
-                </div>
-                <div style={{ marginTop: '8px' }}>
-                  <Text variant="bodySm" color="subdued">{kpiData.criticalPercent}% of products</Text>
-                </div>
-              </div>
-            </Card>
-          </div>
-
-          <div style={{ width: '160px' }}>
-            <Card>
-              <div style={{ padding: '16px' }}>
-                <Text variant="bodySm" fontWeight="bold">No Meta Description</Text>
-                <div style={{ marginTop: '12px' }}>
-                  <Text variant="heading3xl" color="primary">{kpiData.noMetaDescCount}</Text>
-                </div>
-                <div style={{ marginTop: '8px' }}>
-                  <Text variant="bodySm" color="subdued">{kpiData.noMetaDescPercent}% of products</Text>
-                </div>
-              </div>
-            </Card>
-          </div>
-        </div>
+        </Card>
       </div>
 
       <div style={{ marginTop: '24px' }}>

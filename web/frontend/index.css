@@ -42,3 +42,26 @@ body {
 .shopify-style-editor.jodit-container:not(.jodit_inline):focus-within {
     box-shadow: 0 0 0 2px #2c6ecb !important;
 }
+
+/* Dashboard Layout Fixes */
+.stretch-card-container {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.stretch-card-container > .Polaris-Card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.stretch-card-container .Polaris-Card__Section {
+  flex-grow: 1;
+}
+
+/* Safe fallback for Polaris Card structure changes */
+.stretch-card-container > div,
+.stretch-card-container > div > div {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+}
