@@ -213,8 +213,16 @@ export default function Notifications() {
     { id: 'unread', content: <span>Unread {unreadCount > 0 && <Badge status="info">{unreadCount}</Badge>}</span> },
   ];
 
+  const [sessionUnreadIds, setSessionUnreadIds] = useState([]);
+  React.useEffect(() => {
+    if (selectedTab === 1) {
+      const allIds = groupedNotifications.flatMap(group => group.items.map(item => item.id));
+      setSessionUnreadIds(allIds.filter(id => !readIds.includes(id)));
+    }
+  }, [selectedTab]);
+
   const displayedGroups = selectedTab === 0 ? groupedNotifications : groupedNotifications.map(group => {
-    const unreadItems = group.items.filter(item => !readIds.includes(item.id));
+    const unreadItems = group.items.filter(item => sessionUnreadIds.includes(item.id));
     return {
       ...group,
       items: unreadItems,

@@ -163,6 +163,7 @@ function ImageManagerContent() {
   const [editData, setEditData] = useState({});
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [imagePopup, setImagePopup] = useState(null);
+  const [viewingProduct, setViewingProduct] = useState(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState(false);
   const [editPopoverActive, setEditPopoverActive] = useState(false);
   const [isFileSelectorOpen, setIsFileSelectorOpen] = useState(false);
@@ -322,10 +323,8 @@ function ImageManagerContent() {
   }));
 
   const rowMarkup = paginatedProducts.map(
-    (
-      { id, title, sku, imageCount, altCompleteCount, altCompletePercent, missingImages, duplicates, imageManagerStatus: status, lastUpdated, image_url },
-      index,
-    ) => {
+    (product, index) => {
+      const { id, title, sku, imageCount, altCompleteCount, altCompletePercent, missingImages, duplicates, imageManagerStatus: status, lastUpdated, image_url } = product;
       let statusBadge;
       switch (status) {
         case 'Good':
@@ -344,10 +343,11 @@ function ImageManagerContent() {
           statusBadge = <Badge>{status}</Badge>;
       }
 
-      const altCompleteColor =
-        altCompletePercent === '100%' ? '#008000' :
-        altCompletePercent === '0%' ? '#d82c0d' :
-        altCompletePercent === '33%' || altCompletePercent === '25%' ? '#d82c0d' : '#8a6116';
+      let altCompleteColor = '#008000';
+      if (altCompletePercent === '0%' || altCompletePercent === '50%' ||
+        altCompletePercent === '33%' || altCompletePercent === '25%') {
+        altCompleteColor = '#d82c0d';
+      }
 
 
       return (
@@ -356,7 +356,6 @@ function ImageManagerContent() {
           key={id}
           selected={selectedResources.includes(id)}
           position={index}
-          onClick={() => setImagePopup({ image_url, title })}
         >
           <IndexTable.Cell>
             <Stack wrap={false} alignment="center" spacing="tight">
@@ -400,7 +399,7 @@ function ImageManagerContent() {
           </IndexTable.Cell>
           <IndexTable.Cell>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
-              <Button icon={ViewMinor} accessibilityLabel="View" onClick={() => {}} />
+              <Button icon={ViewMinor} accessibilityLabel="View" onClick={() => setViewingProduct(product)} />
               <Button size="slim" onClick={() => setImagePopup({ image_url, title })}>Edit</Button>
             </div>
           </IndexTable.Cell>
@@ -465,7 +464,10 @@ function ImageManagerContent() {
             })}
           </div>
         </div>
-      </Page>
+      
+      
+
+    </Page>
     );
   }
 
@@ -806,6 +808,125 @@ function ImageManagerContent() {
           setUploadPreview(file.url);
         }}
       />
+    {viewingProduct && (
+        <Modal
+          open={!!viewingProduct}
+          onClose={() => setViewingProduct(null)}
+          title="Product details"
+          primaryAction={{
+            content: 'Close',
+            onAction: () => setViewingProduct(null),
+          }}
+          large
+        >
+          <Modal.Section>
+            <div style={{ display: 'flex', gap: '24px', marginBottom: '32px' }}>
+              <div style={{ flexShrink: 0, width: '120px', height: '120px', border: '1px solid #dfe3e8', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: '#f4f6f8' }}>
+                {viewingProduct.image_url ? (
+                  <img src={viewingProduct.image_url} alt={viewingProduct.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <span style={{ color: '#8c9196', fontSize: '14px' }}>Img</span>
+                )}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+                  <Text variant="headingLg" as="h2" fontWeight="bold">{viewingProduct.title}</Text>
+                  <Badge status={viewingProduct.status?.status || (viewingProduct.status === 'active' ? 'success' : 'info')}>
+                    {viewingProduct.status?.label ? viewingProduct.status.label.toUpperCase() : (typeof viewingProduct.status === 'string' ? viewingProduct.status.toUpperCase() : 'DRAFT')}
+                  </Badge>
+                </div>
+                <div style={{ marginBottom: '24px' }}>
+                  <Text variant="bodyMd" color="subdued">/{viewingProduct.handle}</Text>
+                </div>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
+                  <div>
+                    <Text variant="bodySm" color="subdued">Price</Text>
+                    <div style={{ marginTop: '4px' }}>
+                      <Text variant="bodyMd" fontWeight="bold">${viewingProduct.price || '0.00'}</Text>
+                    </div>
+                  </div>
+                  <div>
+                    <Text variant="bodySm" color="subdued">Inventory</Text>
+                    <div style={{ marginTop: '4px' }}>
+                      <Text variant="bodyMd" fontWeight="bold">{viewingProduct.inventory || 0}</Text>
+                    </div>
+                  </div>
+                  <div>
+                    <Text variant="bodySm" color="subdued">Vendor</Text>
+                    <div style={{ marginTop: '4px' }}>
+                      <Text variant="bodyMd" fontWeight="bold">{viewingProduct.vendor || '—'}</Text>
+                    </div>
+                  </div>
+                  <div>
+                    <Text variant="bodySm" color="subdued">Product type</Text>
+                    <div style={{ marginTop: '4px' }}>
+                      <Text variant="bodyMd" fontWeight="bold">{viewingProduct.product_type || '—'}</Text>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '32px' }}>
+              <Text variant="headingMd" as="h3" fontWeight="bold">SEO details</Text>
+              <div style={{ marginTop: '16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+                <div>
+                  <Text variant="bodyMd" fontWeight="bold">Meta title</Text>
+                  <div style={{ marginTop: '8px' }}>
+                    <Text variant="bodyMd" color="subdued">{viewingProduct.meta_title || '—'}</Text>
+                  </div>
+                </div>
+                <div>
+                  <Text variant="bodyMd" fontWeight="bold">Meta description</Text>
+                  <div style={{ marginTop: '8px' }}>
+                    <Text variant="bodyMd" color="subdued">{viewingProduct.meta_description || '—'}</Text>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <Text variant="headingMd" as="h3" fontWeight="bold">Variants ({viewingProduct.variants_list ? viewingProduct.variants_list.length : 0})</Text>
+              <div style={{ marginTop: '16px', border: '1px solid #dfe3e8', borderRadius: '8px', overflow: 'hidden' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
+                  <thead>
+                    <tr style={{ background: '#f4f6f8' }}>
+                      <th style={{ padding: '12px 16px', fontWeight: 'bold' }}>Variant</th>
+                      <th style={{ padding: '12px 16px', fontWeight: 'bold' }}>SKU</th>
+                      <th style={{ padding: '12px 16px', fontWeight: 'bold' }}>Price</th>
+                      <th style={{ padding: '12px 16px', fontWeight: 'bold' }}>Inventory</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(viewingProduct.variants_list || []).map((v, idx) => (
+                      <tr key={v.id || idx} style={{ borderTop: '1px solid #dfe3e8' }}>
+                        <td style={{ padding: '12px 16px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <div style={{ flexShrink: 0, width: '32px', height: '32px', background: '#f4f6f8', border: '1px solid #dfe3e8', borderRadius: '4px', overflow: 'hidden' }}>
+                              {viewingProduct.image_url ? <img src={viewingProduct.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : null}
+                            </div>
+                            <Text variant="bodyMd">{v.title || 'Default Title'}</Text>
+                          </div>
+                        </td>
+                        <td style={{ padding: '12px 16px' }}>
+                          <Text variant="bodyMd" color="subdued">{v.sku || '—'}</Text>
+                        </td>
+                        <td style={{ padding: '12px 16px' }}>
+                          <Text variant="bodyMd">${v.price || '0.00'}</Text>
+                        </td>
+                        <td style={{ padding: '12px 16px' }}>
+                          <Text variant="bodyMd">{v.inventory || 0}</Text>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </Modal.Section>
+        </Modal>
+      )}
     </Page>
   );
 }

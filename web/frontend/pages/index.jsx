@@ -47,7 +47,7 @@ function BulkJobRow({ job, isLast }) {
   
   return (
     <div>
-      <div style={{...s.tableRow, cursor: "pointer"}} onClick={() => setExpanded(!expanded)}>
+      <div style={{...s.tableRow, cursor: job.error_message ? "pointer" : "default"}} onClick={() => job.error_message && setExpanded(!expanded)}>
         <span style={s.colJob}>
           <Text as="span" fontWeight="medium">{job.name}</Text>
         </span>
@@ -66,7 +66,7 @@ function BulkJobRow({ job, isLast }) {
           <Text as="span">{job.records}</Text>
         </span>
         <span style={{ ...s.colChevron, color: "#8a8f96" }}>
-          {expanded ? "▼" : "▶"}
+          {job.error_message ? (expanded ? "▼" : "▶") : ""}
         </span>
       </div>
       {expanded && job.error_message && (
@@ -107,7 +107,7 @@ export default function HomePage() {
       }
     }
     loadDashboard();
-  }, [authenticatedFetch]);
+  }, []);
 
   if (!data) {
     return (
@@ -178,6 +178,7 @@ export default function HomePage() {
 // ---------------------------------------------------------------------------
 
 function HealthScoreCard({ data }) {
+  const navigate = useNavigate();
   if (!data) return null;
   return (
     <Card>
@@ -192,7 +193,7 @@ function HealthScoreCard({ data }) {
         <div style={{ marginTop: "16px", marginBottom: "24px", maxWidth: "240px" }}>
           <Text as="p" color="subdued">Keep going — {data.value}% of your catalog meets quality and completeness standards.</Text>
         </div>
-        <span style={{ color: "#008060", fontWeight: 500, cursor: "pointer", fontSize: "14px" }}>View health details &rarr;</span>
+        <span onClick={() => navigate("/health")} style={{ color: "#008060", fontWeight: 500, cursor: "pointer", fontSize: "14px" }}>View health details &rarr;</span>
       </div>
     </Card>
   );
@@ -251,18 +252,22 @@ function KpiMiniCard({ kpi }) {
   }
 
   return (
-    <Card>
-      <div style={{ padding: "16px" }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text as="p" color="subdued" variant="bodyMd">{title}</Text>
-          <div style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: dotColor }} />
+    <div className="stretch-card-container">
+      <Card>
+        <div style={{ padding: "16px", height: "100%", display: "flex", flexDirection: "column" }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text as="p" color="subdued" variant="bodyMd">{title}</Text>
+            <div style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: dotColor }} />
+          </div>
+          <div style={{ marginTop: "4px", marginBottom: "8px", flexGrow: 1 }}>
+            <Text as="p" variant="headingXl">{kpi.value}</Text>
+          </div>
+          <div>
+            {badgeText && <Badge status={badgeTone}>{badgeText}</Badge>}
+          </div>
         </div>
-        <div style={{ marginTop: "4px", marginBottom: "8px" }}>
-          <Text as="p" variant="headingXl">{kpi.value}</Text>
-        </div>
-        {badgeText && <Badge status={badgeTone}>{badgeText}</Badge>}
-      </div>
-    </Card>
+      </Card>
+    </div>
   );
 }
 
@@ -271,12 +276,11 @@ function KpiMiniCard({ kpi }) {
 // ---------------------------------------------------------------------------
 
 function BulkJobsCard({ data }) {
-  const padStyle = { ...s.pad, flexGrow: 1, display: 'flex', flexDirection: 'column' };
   const navigate = useNavigate();
   if (!data) return null;
   return (
     <Card>
-      <div style={padStyle}>
+      <div style={s.pad}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <Text as="h2" variant="headingMd">Recent bulk jobs</Text>
           <span style={{ color: "#008060", fontWeight: 500, cursor: "pointer", fontSize: "14px" }} onClick={() => navigate("/bulk-jobs")}>View all bulk jobs &rarr;</span>
@@ -330,7 +334,7 @@ function SyncActivityRow({ job, isLast }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <div>
-      <div style={{...s.tableRow, cursor: "pointer"}} onClick={() => setExpanded(!expanded)}>
+      <div style={{...s.tableRow, cursor: job.error_message ? "pointer" : "default"}} onClick={() => job.error_message && setExpanded(!expanded)}>
         <span style={s.colJob}>
           <Text as="span" fontWeight="medium">{job.type}</Text>
         </span>
@@ -349,7 +353,7 @@ function SyncActivityRow({ job, isLast }) {
           <Text as="span">{job.records}</Text>
         </span>
         <span style={{ ...s.colChevron, color: "#8a8f96" }}>
-          {expanded ? "▼" : "▶"}
+          {job.error_message ? (expanded ? "▼" : "▶") : ""}
         </span>
       </div>
       {expanded && job.error_message && (
@@ -418,18 +422,28 @@ function SyncActivityCard({ data }) {
 // ---------------------------------------------------------------------------
 
 function ExportCard({ navigate }) {
+  const fetch = useAuthenticatedFetch();
   const padStyle = { ...s.pad, display: 'flex', flexDirection: 'column', flexGrow: 1 };
   const [data, setData] = useState([]);
+  
   useEffect(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem('recent_exports') || '[]');
-      const mapped = stored.slice(0, 3).map(job => ({
-        label: job.name,
-        date: job.date,
-        status: "Completed"
-      }));
-      setData(mapped);
-    } catch {}
+    async function loadExports() {
+      try {
+        const response = await fetch('/api/exports');
+        if (response.ok) {
+          const json = await response.json();
+          const mapped = json.slice(0, 3).map(job => ({
+            label: job.job_name,
+            date: new Date(job.created_at).toLocaleString(),
+            status: job.status
+          }));
+          setData(mapped);
+        }
+      } catch (e) {
+        console.error("Failed to load exports", e);
+      }
+    }
+    loadExports();
   }, []);
 
   return (

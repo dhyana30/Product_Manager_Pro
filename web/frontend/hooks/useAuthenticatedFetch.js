@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { authenticatedFetch } from "@shopify/app-bridge/utilities";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { Redirect } from "@shopify/app-bridge/actions";
@@ -16,13 +17,16 @@ import { Redirect } from "@shopify/app-bridge/actions";
  */
 export function useAuthenticatedFetch() {
   const app = useAppBridge();
-  const fetchFunction = authenticatedFetch(app);
+  
+  return useMemo(() => {
+    const fetchFunction = authenticatedFetch(app);
 
-  return async (uri, options) => {
-    const response = await fetchFunction(uri, options);
-    checkHeadersForReauthorization(response.headers, app);
-    return response;
-  };
+    return async (uri, options) => {
+      const response = await fetchFunction(uri, options);
+      checkHeadersForReauthorization(response.headers, app);
+      return response;
+    };
+  }, [app]);
 }
 
 function checkHeadersForReauthorization(headers, app) {

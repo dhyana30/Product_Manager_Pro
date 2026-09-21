@@ -262,10 +262,47 @@ export default function Catalog() {
         return p;
       }));
       setEditingId(null);
-    } catch (err) {
-      setError(err.message);
+    } catch (e) {
+      setError(e.message);
     } finally {
       setIsSavingEdit(false);
+    }
+  };
+
+  const [isApplyingPrice, setIsApplyingPrice] = useState(false);
+  const handleBulkPrice = async (type, value, round) => {
+    setIsApplyingPrice(true);
+    try {
+      const selectedProducts = products.filter(p => selectedResources.includes(String(p.id)));
+      for (const p of selectedProducts) {
+        let currentPrice = parseFloat(p.price);
+        if (isNaN(currentPrice)) currentPrice = 0;
+        
+        let newPrice = currentPrice;
+        const val = parseFloat(value);
+        if (type === "percentage") {
+          newPrice = currentPrice * (1 + val / 100);
+        } else {
+          newPrice = currentPrice + val;
+        }
+        
+        if (round === "2") newPrice = Math.round(newPrice * 100) / 100;
+        else if (round === "99") newPrice = Math.floor(newPrice) + 0.99;
+        else if (round === "0") newPrice = Math.round(newPrice);
+        
+        await authenticatedFetch(`/api/products/${p.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ price: newPrice.toFixed(2) }),
+        });
+      }
+      
+      await loadProducts();
+      clearSelection();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setIsApplyingPrice(false);
     }
   };
 
@@ -334,10 +371,10 @@ export default function Catalog() {
             <Text variant="headingMd">Products</Text>
             <ButtonGroup>
               <Button icon={ImportMinor} loading={isSyncing} onClick={() => setConfirmSyncOpen(true)}>
-                Shopify → App
+                Sync from Shopify
               </Button>
               <Button icon={ExportMinor} loading={isPushing} onClick={() => setConfirmPushOpen(true)}>
-                App → Shopify
+                Sync to Shopify
               </Button>
               <CreateProductButton />
             </ButtonGroup>
@@ -426,7 +463,7 @@ export default function Catalog() {
                 count={selectedResources.length}
                 onSelect={() => setBulkEditorOpen(true)}
               />
-              <PriceButton disabled={selectedResources.length === 0} count={selectedResources.length} />
+              <PriceButton disabled={selectedResources.length === 0} count={selectedResources.length} onApply={handleBulkPrice} loading={isApplyingPrice} />
             </div>
           </Filters>
         </div>
@@ -453,6 +490,7 @@ export default function Catalog() {
                   onSaveEdit={handleSaveEdit}
                   isSaving={isSavingEdit && editingId === row.id}
                   onViewProduct={(r) => setViewProduct(r)}
+                  onImageClick={(r) => setImagePopup(r)}
                 />
           ))}
         </IndexTable>
@@ -494,8 +532,17 @@ export default function Catalog() {
           title={imagePopup.title}
         >
           <Modal.Section>
-            <div style={{ display: 'flex', justifyContent: 'center' }}>
-              <img src={imagePopup.image_url} alt={imagePopup.title} style={{ maxWidth: '100%', maxHeight: '60vh', objectFit: 'contain', borderRadius: '8px' }} />
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '200px', flexDirection: 'column' }}>
+              {imagePopup.image_url ? (
+                <img src={imagePopup.image_url} alt={imagePopup.title} style={{ maxWidth: '100%', maxHeight: '60vh', objectFit: 'contain', borderRadius: '8px' }} />
+              ) : (
+                <div style={{ textAlign: 'center', color: '#8c9196' }}>
+                  <Icon source={ImageMajor} color="subdued" />
+                  <div style={{ marginTop: '12px' }}>
+                    <Text variant="bodyMd" color="subdued" as="p">No image available for this product</Text>
+                  </div>
+                </div>
+              )}
             </div>
           </Modal.Section>
         </Modal>
@@ -605,14 +652,17 @@ export default function Catalog() {
 // Row
 // ---------------------------------------------------------------------------
 
-function ProductRow({ row, index, columns, selected, isEditing, editData, onEditDataChange, onStartEdit, onCancelEdit, onSaveEdit, isSaving, onViewProduct }) {
+function ProductRow({ row, index, columns, selected, isEditing, editData, onEditDataChange, onStartEdit, onCancelEdit, onSaveEdit, isSaving, onViewProduct, onImageClick }) {
   return (
-    <IndexTable.Row id={String(row.id)} key={row.id} position={index} selected={selected} onClick={isEditing ? undefined : onStartEdit}>
+    <IndexTable.Row id={String(row.id)} key={row.id} position={index} selected={selected}>
       {columns.map((col) => (
         <IndexTable.Cell key={col.key}>
           {col.key === "product" && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <div style={{ width: '40px', height: '40px', border: '1px solid #e1e3e5', borderRadius: '4px', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f4f6f8' }}>
+              <div 
+                style={{ width: '40px', height: '40px', border: '1px solid #e1e3e5', borderRadius: '4px', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f4f6f8', cursor: 'pointer' }}
+                onClick={(e) => { e.stopPropagation(); if(onImageClick) onImageClick(row); }}
+              >
                 {row.image_url ? (
                   <img src={row.image_url} alt={row.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 ) : (
@@ -623,7 +673,9 @@ function ProductRow({ row, index, columns, selected, isEditing, editData, onEdit
                 {isEditing ? (
                   <div onClick={(e) => e.stopPropagation()}><TextField value={editData.title} onChange={(v) => onEditDataChange({...editData, title: v})} autoComplete="off" /></div>
                 ) : (
-                  <Text variant="bodyMd" fontWeight="bold" as="span">{row.title}</Text>
+                  <div style={{ cursor: 'pointer', display: 'inline-block' }} onClick={(e) => { e.stopPropagation(); onStartEdit(); }}>
+                    <Text variant="bodyMd" fontWeight="bold" as="span">{row.title}</Text>
+                  </div>
                 )}
               </div>
             </div>
@@ -2208,17 +2260,22 @@ function BulkEditPopover({ disabled, count, onSelect }) {
   );
 }
 
-function PriceButton({ disabled, count }) {
+function PriceButton({ disabled, count, onApply, loading }) {
   const [open, setOpen] = useState(false);
   const [type, setType] = useState("percentage");
   const [value, setValue] = useState("10");
   const [round, setRound] = useState("2");
 
+  const handleApply = () => {
+    onApply(type, value, round);
+    setOpen(false);
+  };
+
   return (
     <>
       <Button icon={CashDollarMinor} disabled={disabled} onClick={() => setOpen(true)}>Price</Button>
       <Modal open={open} onClose={() => setOpen(false)} title="Adjust prices" primaryAction={{
-        content: "Apply", onAction: () => setOpen(false),
+        content: "Apply", onAction: handleApply, loading: loading,
       }} secondaryActions={[{ content: "Cancel", onAction: () => setOpen(false) }]}>
         <Modal.Section>
           <Select label="Adjustment type" value={type} onChange={setType} options={[
@@ -2249,7 +2306,7 @@ function ConfirmPushModal({ open, loading, onCancel, onConfirm }) {
     <Modal
       open={open}
       onClose={onCancel}
-      title="App → Shopify (Push Sync)"
+      title="Sync to Shopify"
       primaryAction={{ content: "Sync now", onAction: onConfirm, loading }}
       secondaryActions={[{ content: "Cancel", onAction: onCancel }]}
     >
@@ -2265,7 +2322,7 @@ function ConfirmSyncModal({ open, loading, onCancel, onConfirm }) {
     <Modal
       open={open}
       onClose={onCancel}
-      title="Shopify → App (Pull Sync)"
+      title="Sync from Shopify"
       primaryAction={{ content: "Sync now", onAction: onConfirm, loading }}
       secondaryActions={[{ content: "Cancel", onAction: onCancel }]}
     >

@@ -104,107 +104,23 @@ Route::middleware('shopify.auth')->group(function () {
         ]);
     });
 
-    Route::get('/products', function (Request $request) {
+        Route::get('/products', function (Request $request) {
         $query = strtolower((string) $request->query('search', ''));
         $shop = $request->get('shopifySession')->getShop();
+        $page = (int) $request->query('page', 1);
+        $perPage = (int) $request->query('per_page', 10000);
         
-        $products = DB::table('products_cache')
+        $productsQuery = DB::table('products_cache')
             ->where('shop_domain', $shop)
             ->when($query !== '', fn ($builder) => $builder->where(function ($products) use ($query) {
                 $products->whereRaw('LOWER(title) LIKE ?', ["%$query%"])
                     ->orWhereRaw('LOWER(vendor) LIKE ?', ["%$query%"])
                     ->orWhereRaw('LOWER(handle) LIKE ?', ["%$query%"]);
             }))
-            ->orderBy('title')
-            ->get();
-
-        $client = new Graphql($shop, $request->get('shopifySession')->getAccessToken());
-        $realTimeData = [];
-        
-        $productGids = $products->pluck('product_gid')->filter()->toArray();
-        if (!empty($productGids)) {
-            $chunks = array_chunk($productGids, 20);
-            foreach ($chunks as $chunk) {
-                $gidChunk = array_map(function($id) { return strpos($id, 'gid://') === 0 ? $id : "gid://shopify/Product/{$id}"; }, $chunk);
-                $idsString = implode('","', $gidChunk);
-                $graphqlQuery = <<<GRAPHQL
-                query {
-                    nodes(ids: ["$idsString"]) {
-                        ... on Product {
-                            id
-                            title
-                            descriptionHtml
-                            tags
-                            status
-                            productType
-                            vendor
-                            templateSuffix
-                            publishedAt
-                            createdAt
-                            status
-                            handle
-                            seo { title description }
-                            media(first: 1) { nodes { preview { image { url } } } }
-                            collections(first: 10) { nodes { title } }
-                            publications(first: 10) { nodes { channel { name } } }
-                            category: metafield(namespace: "custom", key: "category") { value }
-                            z8_offers: metafield(namespace: "custom", key: "z8_offers") { value }
-                            testing: metafield(namespace: "custom", key: "testing") { value }
-                            productCategory { productTaxonomyNode { fullName } }
-                            variants(first: 50) {
-                                nodes {
-                                    id
-                                    title
-                                    price
-                                    compareAtPrice
-                                    sku
-                                    barcode
-                                    inventoryQuantity
-                                    taxable
-                                    inventoryPolicy
-                                    unitPriceMeasurement {
-                                        measuredType
-                                        quantityValue
-                                        quantityUnit
-                                        referenceValue
-                                        referenceUnit
-                                    }
-                                    testing: metafield(namespace: "custom", key: "testing") { value }
-                                    inventoryItem {
-                                        tracked
-                                        unitCost { amount }
-                                        measurement { weight { value unit } }
-                                        harmonizedSystemCode
-                                        countryCodeOfOrigin
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-GRAPHQL;
-                try {
-                    $response = $client->query(['query' => $graphqlQuery]);
-                    $body = $response->getDecodedBody();
-                    file_put_contents(public_path("graphql_debug.json"), json_encode(["query" => $graphqlQuery, "body" => $body]));
-                    file_put_contents("/tmp/graphql_debug.txt", json_encode($body));
-                    if (isset($body["errors"])) { \Log::error("GraphQL Body Errors: " . json_encode($body["errors"])); }
-                    
-                    if (isset($body['data']['nodes'])) {
-                        foreach ($body['data']['nodes'] as $node) {
-                            if ($node) {
-                                // Store by numeric ID to match DB
-                                $numericId = preg_replace('/^gid:\/\/shopify\/Product\//', '', $node['id']);
-                                $realTimeData[$numericId] = $node;
-                                $realTimeData[$node['id']] = $node; // store both just in case
-                            }
-                        }
-                    }
-                } catch (\Exception $e) {
-                    \Log::error("GraphQL Error fetching real-time data: " . $e->getMessage());
-                }
-            }
-        }
+            ->orderBy('title');
+            
+        $total = $productsQuery->count();
+        $products = $productsQuery->forPage($page, $perPage)->get();
 
         $allProductIds = $products->pluck('id')->toArray();
         $allVariants = DB::table('variants_cache')->whereIn('product_cache_id', $allProductIds)->get();
@@ -217,79 +133,91 @@ GRAPHQL;
             $variantsByProduct[$v->product_cache_id][] = $vArray;
         }
 
-        $mappedProducts = $products->map(function ($product) use ($realTimeData, $variantsByProduct) {
-            $rt = $realTimeData[$product->product_gid] ?? null;
-            
-            // Build the variant list by merging cache + real-time
+        $mappedProducts = $products->map(function ($product) use ($variantsByProduct) {
             $mergedVariants = [];
-            $rtVariants = [];
-            if ($rt && isset($rt['variants']['nodes'])) {
-                foreach ($rt['variants']['nodes'] as $rtv) {
-                    $rtVariants[$rtv['id']] = $rtv;
-                    $numId = preg_replace('/^gid:\/\/shopify\/ProductVariant\//', '', $rtv['id']);
-                    $rtVariants[$numId] = $rtv;
-                }
-            }
             
             foreach ($variantsByProduct[$product->id] ?? [] as $v) {
-                $gid = $v['variant_gid'] ?? null;
-                $rtv = $rtVariants[$gid] ?? null;
-                
                 $mergedVariants[] = [
                     'id' => $v['id'],
-                    'title' => $rtv['title'] ?? $v['title'],
-                    'sku' => $rtv['sku'] ?? $v['sku'],
-                    'price' => $rtv['price'] ?? $v['price'],
-                    'inventory' => $rtv['inventoryQuantity'] ?? $v['inventory'],
-                    'compare_at_price' => $rtv['compareAtPrice'] ?? '',
-                    'barcode' => $rtv['barcode'] ?? '',
-                    'cost_per_item' => (isset($rtv['inventoryItem']['unitCost']['amount']) ? $rtv['inventoryItem']['unitCost']['amount'] : ''),
-                    'hs_code' => (isset($rtv['inventoryItem']['harmonizedSystemCode']) ? $rtv['inventoryItem']['harmonizedSystemCode'] : ''),
-                    'origin' => (isset($rtv['inventoryItem']['countryCodeOfOrigin']) ? $rtv['inventoryItem']['countryCodeOfOrigin'] : ''),
-                    'testing' => (isset($rtv['testing']['value']) && $rtv['testing']['value'] === 'true') ? 'true' : 'false',
-                    'charge_taxes' => (isset($rtv['taxable']) && $rtv['taxable']) ? 'true' : 'false',
-                    'continue_selling' => (isset($rtv['inventoryPolicy']) && $rtv['inventoryPolicy'] === 'CONTINUE') ? 'true' : 'false',
-                    'track_quantity' => (isset($rtv['inventoryItem']['tracked']) && $rtv['inventoryItem']['tracked']) ? 'true' : 'false',
-                    'weight_unit' => isset($rtv['inventoryItem']['measurement']['weight']['unit']) ? (
-                        $rtv['inventoryItem']['measurement']['weight']['unit'] === 'KILOGRAMS' ? 'kg' : (
-                        $rtv['inventoryItem']['measurement']['weight']['unit'] === 'GRAMS' ? 'g' : (
-                        $rtv['inventoryItem']['measurement']['weight']['unit'] === 'POUNDS' ? 'lb' : (
-                        $rtv['inventoryItem']['measurement']['weight']['unit'] === 'OUNCES' ? 'oz' : 'kg')))
-                    ) : 'kg',
-                    'weight_val' => $rtv['inventoryItem']['measurement']['weight']['value'] ?? null,
-                    'unit_price' => isset($rtv['unitPriceMeasurement']) ? json_encode([
-                        'totalMeasure' => $rtv['unitPriceMeasurement']['quantityValue'],
-                        'totalUnit' => $rtv['unitPriceMeasurement']['quantityUnit'],
-                        'baseMeasure' => $rtv['unitPriceMeasurement']['referenceValue'],
-                        'baseUnit' => $rtv['unitPriceMeasurement']['referenceUnit']
-                    ]) : null,
+                    'title' => $v['title'] ?? '',
+                    'sku' => $v['sku'] ?? '',
+                    'price' => $v['price'] ?? '',
+                    'inventory' => $v['inventory'] ?? 0,
+                    'compare_at_price' => '',
+                    'barcode' => '',
+                    'cost_per_item' => '',
+                    'hs_code' => '',
+                    'origin' => '',
+                    'testing' => 'false',
+                    'charge_taxes' => 'false',
+                    'continue_selling' => 'false',
+                    'track_quantity' => 'true',
+                    'weight_unit' => 'kg',
+                    'weight_val' => null,
+                    'unit_price' => null,
                 ];
             }
             
             $v1 = $mergedVariants[0] ?? [];
             
+            $testing = 'false';
+            $category = '—';
+            $z8 = '—';
+            
+            if (!empty($product->metafields)) {
+                $metafields = json_decode($product->metafields, true);
+                if (is_array($metafields)) {
+                    if (isset($metafields['nodes'])) {
+                        foreach ($metafields['nodes'] as $mf) {
+                            if (isset($mf['key'])) {
+                                if ($mf['key'] === 'testing') $testing = ($mf['value'] === 'true') ? 'true' : 'false';
+                                if ($mf['key'] === 'category') $category = $mf['value'] ?? '—';
+                                if ($mf['key'] === 'z8_offers') $z8 = $mf['value'] ?? '—';
+                            }
+                        }
+                    } else {
+                        foreach ($metafields as $mf) {
+                            if (is_array($mf) && isset($mf['key'])) {
+                                if ($mf['key'] === 'testing') $testing = ($mf['value'] === 'true') ? 'true' : 'false';
+                                if ($mf['key'] === 'category') $category = $mf['value'] ?? '—';
+                                if ($mf['key'] === 'z8_offers') $z8 = $mf['value'] ?? '—';
+                            }
+                        }
+                    }
+                }
+            }
+
+            $collections = !empty($product->collections) ? json_decode($product->collections, true) : [];
+            $collectionTitles = [];
+            if (is_array($collections)) {
+                if (isset($collections['nodes'])) {
+                    $collectionTitles = array_map(fn($c) => $c['title'] ?? '', $collections['nodes']);
+                } else {
+                    $collectionTitles = array_map(fn($c) => is_array($c) ? ($c['title'] ?? '') : $c, $collections);
+                }
+            }
+            
             return [
                 'id' => $product->id,
-                'title' => $rt['title'] ?? $product->title,
-                'description' => $rt['descriptionHtml'] ?? '',
-                'product_type' => $rt['productType'] ?? ($product->product_type ?? '—'),
-                'product_category' => $rt['productCategory']['productTaxonomyNode']['fullName'] ?? '—',
-                'testing' => (isset($rt['testing']['value']) && $rt['testing']['value'] === 'true') ? 'true' : 'false',
+                'title' => $product->title,
+                'description' => $product->meta_description ?? '',
+                'product_type' => '—', // Fallback
+                'product_category' => '—', // Fallback
+                'testing' => $testing,
                 'online_store_scheduled' => 'false',
-                'vendor' => $rt['vendor'] ?? ($product->vendor ?: '—'),
-                'status' => isset($rt['status']) ? strtolower($rt['status']) : $product->status,
-                'tags' => $rt['tags'] ?? ($product->tags ? json_decode($product->tags, true) : []),
-                'collections' => isset($rt['collections']['nodes']) ? array_map(fn($c) => $c['title'], $rt['collections']['nodes']) : [],
-                'template' => $rt['templateSuffix'] ?? 'product',
-                'published_at' => ($rt['publishedAt'] ?? null) ? date('Y-m-d', strtotime($rt['publishedAt'])) : ( (isset($rt['status']) && $rt['status'] === 'ACTIVE') || strtolower($product->status) === 'active' ? (isset($rt['createdAt']) ? date('Y-m-d', strtotime($rt['createdAt'])) : '') : '' ),
-                'handle' => $rt['handle'] ?? $product->handle,
-                'meta_title' => $rt['seo']['title'] ?? $product->meta_title,
-                'meta_description' => $rt['seo']['description'] ?? $product->meta_description,
-                'image_url' => $rt['media']['nodes'][0]['preview']['image']['url'] ?? $product->image_url,
-                'media' => $rt['media']['nodes'][0]['preview']['image']['url'] ?? $product->image_url,
-                'sales_channels' => isset($rt['publications']['nodes']) ? implode(', ', array_map(function($p) { return $p['channel']['name'] ?? 'Online Store'; }, $rt['publications']['nodes'])) : '—',
+                'vendor' => $product->vendor ?: '—',
+                'status' => strtolower($product->status),
+                'tags' => $product->tags ? json_decode($product->tags, true) : [],
+                'collections' => $collectionTitles,
+                'template' => 'product',
+                'published_at' => strtolower($product->status) === 'active' ? (date('Y-m-d', strtotime($product->created_at))) : '',
+                'handle' => $product->handle,
+                'meta_title' => $product->meta_title,
+                'meta_description' => $product->meta_description,
+                'image_url' => $product->image_url,
+                'media' => $product->image_url,
+                'sales_channels' => '—',
                 'variants_list' => $mergedVariants,
-                // Top level fallbacks for the product row
                 'sku' => $v1['sku'] ?? '',
                 'price' => $v1['price'] ?? '',
                 'compare_at_price' => $v1['compare_at_price'] ?? '',
@@ -304,15 +232,18 @@ GRAPHQL;
                 'continue_selling' => $v1['continue_selling'] ?? 'false',
                 'track_quantity' => $v1['track_quantity'] ?? 'false',
                 'unit_price' => $v1['unit_price'] ?? null,
-                'metafield_category' => $rt['category']['value'] ?? '—',
-                'metafield_z8' => $rt['z8_offers']['value'] ?? '—',
+                'metafield_category' => $category,
+                'metafield_z8' => $z8,
             ];
         });
 
-        return response()->json(['data' => $mappedProducts, 'meta' => ['total' => $mappedProducts->count(), 'page' => 1]]);
+        return response()->json([
+            'data' => $mappedProducts, 
+            'meta' => ['total' => $total, 'page' => $page, 'per_page' => $perPage]
+        ]);
     });
 
-    Route::post('/products/{id}/image', function (Request $request, $id) {
+Route::post('/products/{id}/image', function (Request $request, $id) {
         $shop = $request->get('shopifySession')->getShop();
         $request->validate([
             'image' => 'required|file|image|max:10240',
@@ -365,12 +296,15 @@ GRAPHQL;
             $variantInput = $request->only(['price', 'sku', 'title', 'inventory', 'barcode', 'weight', 'compare_at_price', 'cost_per_item', 'hs_code', 'origin', 'testing']);
             if (!empty($variantInput)) {
                 $variantInput['updated_at'] = now();
+                $variantInput['sync_pending'] = true;
                 DB::table('variants_cache')->where('id', $realId)->update($variantInput);
             }
         } else {
             $productInput = $request->only(['title', 'vendor', 'status', 'tags', 'image_url', 'handle']);
+            $productInput = $request->only(['title', 'vendor', 'status', 'tags', 'image_url', 'handle', 'image_name', 'image_alt', 'meta_title', 'meta_description']);
             if (!empty($productInput)) {
                 $productInput['updated_at'] = now();
+                $productInput['sync_pending'] = true;
                 DB::table('products_cache')->where('id', $realId)->where('shop_domain', $shop)->update($productInput);
             }
             
@@ -380,7 +314,8 @@ GRAPHQL;
             }
             if (!empty($variantInput)) {
                 $variantInput['updated_at'] = now();
-                DB::table('variants_cache')->where('product_cache_id', $realId)->limit(1)->update($variantInput);
+                $variantInput['sync_pending'] = true;
+                DB::table('variants_cache')->where('product_cache_id', $realId)->update($variantInput);
             }
         }
 
@@ -746,89 +681,6 @@ GRAPHQL,
         return response()->json(['message' => 'Catalog sync completed', 'synced' => $synced, 'completed_at' => now()->toIso8601String()]);
     });
 
-    Route::post('/sync/push', function (Request $request) {
-        $session = $request->get('shopifySession');
-        $client = new Graphql($session->getShop(), $session->getAccessToken());
-        
-        $searchQuery = $request->input('search', '');
-
-        $query = <<<GRAPHQL
-        query {
-            products(first: 50, query: \$search) {
-                edges {
-                    node {
-                        id
-                        title
-                        handle
-                        vendor
-                        status
-                        media(first: 10) {
-                            edges {
-                                node {
-                                    ... on MediaImage {
-                                        image {
-                                            url
-                                            altText
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        variants(first: 10) {
-                            edges {
-                                node {
-                                    sku
-                                    inventoryQuantity
-                                    testing: metafield(namespace: "custom", key: "testing") { value }
-                                    price
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-GRAPHQL;
-
-        try {
-            $response = $client->query(['query' => $query, 'variables' => ['search' => "*$searchQuery*"]]);
-            $body = $response->getDecodedBody();
-                    file_put_contents(public_path("graphql_debug.json"), json_encode(["query" => $graphqlQuery, "body" => $body]));
-                    file_put_contents("/tmp/graphql_debug.txt", json_encode($body));
-                    if (isset($body["errors"])) { \Log::error("GraphQL Body Errors: " . json_encode($body["errors"])); }
-            
-            $formattedProducts = collect($body['data']['products']['edges'])->map(function ($edge) {
-                $node = $edge['node'];
-                
-                // Get the first image URL if it exists
-                $imageUrl = null;
-                if (!empty($node['media']['edges'])) {
-                    $media = $node['media']['edges'][0]['node'];
-                    $imageUrl = $media['image']['url'] ?? null;
-                }
-                
-                // Get SKU from first variant
-                $sku = null;
-                if (!empty($node['variants']['edges'])) {
-                    $sku = $node['variants']['edges'][0]['node']['sku'] ?? null;
-                }
-                
-                return [
-                    'id' => (int) str_replace('gid://shopify/Product/', '', $node['id']),
-                    'product_gid' => $node['id'],
-                    'title' => $node['title'],
-                    'sku' => $sku,
-                    'image_url' => $imageUrl
-                ];
-            })->toArray();
-            
-            return response()->json(['data' => $formattedProducts]);
-        } catch (\Exception $e) {
-            \Log::error("GraphQL Error: " . $e->getMessage());
-            return response()->json(['error' => 'Failed to fetch products from Shopify'], 500);
-        }
-    });
-
     Route::get('/files', function (Request $request) {
         $session = $request->get('shopifySession');
         $client = new Graphql($session->getShop(), $session->getAccessToken());
@@ -855,8 +707,6 @@ GRAPHQL;
             $response = $client->query(['query' => $query]);
             \Log::info('Taxonomy Roots Response:', $response->getDecodedBody());
             $body = $response->getDecodedBody();
-                    file_put_contents(public_path("graphql_debug.json"), json_encode(["query" => $graphqlQuery, "body" => $body]));
-                    file_put_contents("/tmp/graphql_debug.txt", json_encode($body));
                     if (isset($body["errors"])) { \Log::error("GraphQL Body Errors: " . json_encode($body["errors"])); }
             
             $graphqlData = $body['data'] ?? [];
@@ -910,6 +760,7 @@ GRAPHQL;
         $products = DB::table('products_cache')
             ->where('shop_domain', $session->getShop())
             ->orderByDesc('updated_at')
+            ->where('sync_pending', true)
             ->limit(10)
             ->get();
             
@@ -1006,6 +857,8 @@ GRAPHQL,
                 }
                 
                 $pushed++;
+                DB::table('products_cache')->where('id', $product->id)->update(['sync_pending' => false]);
+                DB::table('variants_cache')->where('product_cache_id', $product->id)->update(['sync_pending' => false]);
             } catch (\Throwable $exception) {
                 report($exception);
             }
@@ -1061,6 +914,17 @@ GRAPHQL,
         Cache::forever("automation:$shop", array_merge($rules, [$rule]));
 
         return response()->json(['data' => $rule], 201);
+    });
+
+    Route::get('/exports', function (Request $request) {
+        $shop = $request->get('shopifySession')->getShop();
+        $exports = DB::table('bulk_jobs')
+            ->where('shop_domain', $shop)
+            ->where('job_type', 'Export')
+            ->orderByDesc('created_at')
+            ->limit(10)
+            ->get();
+        return response()->json($exports);
     });
 
     Route::get('/export', function (Request $request) {
@@ -1142,6 +1006,19 @@ GRAPHQL,
                 }
             });
 
+        $recordsAffected = count($dataRows) - 1;
+        DB::table('bulk_jobs')->insert([
+            'shop_domain' => $shop,
+            'job_name' => 'Products Export (' . strtoupper($format) . ')',
+            'job_type' => 'Export',
+            'status' => 'Completed',
+            'records_affected' => $recordsAffected,
+            'created_at' => now(),
+            'updated_at' => now(),
+            'started_at' => now(),
+            'completed_at' => now(),
+        ]);
+        
         if ($format === 'xlsx') {
             $xlsx = \Shuchkin\SimpleXLSXGen::fromArray($dataRows);
             $tmpFile = tempnam(sys_get_temp_dir(), 'export_');
@@ -1241,7 +1118,7 @@ GRAPHQL,
             ->whereIn('job_type', ['Catalog Sync', 'Catalog Push']);
 
         if ($request->has('direction') && !empty($request->direction)) {
-            $type = $request->direction === 'Shopify → App' ? 'Catalog Sync' : 'Catalog Push';
+            $type = $request->direction === 'Sync from Shopify' ? 'Catalog Sync' : 'Catalog Push';
             $query->where('job_type', $type);
         }
         if ($request->has('type') && !empty($request->type)) {
@@ -1252,7 +1129,7 @@ GRAPHQL,
         }
 
         $jobs = $query->orderBy('created_at', 'desc')->get()->map(function($job) {
-            $job->direction = $job->job_type === 'Catalog Sync' ? 'Shopify → App' : 'App → Shopify';
+            $job->direction = $job->job_type === 'Catalog Sync' ? 'Sync from Shopify' : 'Sync to Shopify';
             return $job;
         });
 
@@ -1439,5 +1316,83 @@ GRAPHQL;
         $response = $client->query(['query' => $query]);
         $body = $response->getDecodedBody();
         return response()->json(['currencyCode' => $body['data']['shop']['currencyCode'] ?? 'USD']);
+    });
+    Route::get('/health', function (Illuminate\Http\Request $request) {
+        $shop = $request->get('shopifySession')->getShop();
+        $products = Illuminate\Support\Facades\DB::table('products_cache')->where('shop_domain', $shop)->get();
+        $variants = Illuminate\Support\Facades\DB::table('variants_cache')->whereIn('product_cache_id', $products->pluck('id'))->get();
+        
+        $missingImages = [];
+        $incompleteDesc = [];
+        $duplicateSkus = [];
+        $missingCats = [];
+        
+        $skuCounts = [];
+        foreach ($variants as $v) {
+            if ($v->sku) {
+                $skuCounts[$v->sku] = ($skuCounts[$v->sku] ?? 0) + 1;
+            }
+        }
+        $duplicateSkuList = array_keys(array_filter($skuCounts, fn($c) => $c > 1));
+        
+        foreach ($products as $p) {
+            $pVariants = $variants->where('product_cache_id', $p->id);
+            $sku = $pVariants->first() ? $pVariants->first()->sku : '';
+            
+            if (!$p->image_url) {
+                $missingImages[] = [
+                    'id' => $p->id . '-img', 'title' => $p->title, 'sku' => $sku, 
+                    'issue' => 'Missing product image', 'severity' => 'Critical', 'status' => 'Open'
+                ];
+            }
+            if (!$p->meta_description || strlen($p->meta_description) < 40) {
+                $incompleteDesc[] = [
+                    'id' => $p->id . '-desc', 'title' => $p->title, 'sku' => $sku, 
+                    'issue' => 'Description under 40 words', 'severity' => 'Warning', 'status' => 'Open'
+                ];
+            }
+            
+            $hasDup = false;
+            foreach ($pVariants as $v) {
+                if ($v->sku && in_array($v->sku, $duplicateSkuList)) {
+                    $hasDup = true;
+                    break;
+                }
+            }
+            if ($hasDup) {
+                $duplicateSkus[] = [
+                    'id' => $p->id . '-sku', 'title' => $p->title, 'sku' => $sku, 
+                    'issue' => 'Duplicate SKU detected', 'severity' => 'Warning', 'status' => 'In review'
+                ];
+            }
+            
+            if (!$p->collections || $p->collections === '[]') {
+                $missingCats[] = [
+                    'id' => $p->id . '-cat', 'title' => $p->title, 'sku' => $sku, 
+                    'issue' => 'Not mapped to category', 'severity' => 'Info', 'status' => 'Open'
+                ];
+            }
+        }
+        
+        $affectedProducts = array_merge($missingImages, $incompleteDesc, $duplicateSkus, $missingCats);
+        $affectedProductIds = array_unique(array_map(function($a) { return explode('-', $a['id'])[0]; }, $affectedProducts));
+        
+        $totalProducts = $products->count();
+        $totalProducts = $totalProducts > 0 ? $totalProducts : 1;
+        
+        $imgScore = ($totalProducts - count($missingImages)) / $totalProducts * 100;
+        $descScore = ($totalProducts - count($incompleteDesc)) / $totalProducts * 100;
+        $healthScore = round(($imgScore * 0.25) + ($descScore * 0.20) + 15 + 15 + 15 + 10);
+        
+        return response()->json([
+            'score' => $healthScore,
+            'affectedCount' => count($affectedProductIds),
+            'totalCount' => $totalProducts,
+            'missingImagesCount' => count($missingImages),
+            'incompleteDescCount' => count($incompleteDesc),
+            'duplicateSkuCount' => count($duplicateSkus),
+            'missingCatsCount' => count($missingCats),
+            'affectedProducts' => $affectedProducts
+        ]);
     });
 });

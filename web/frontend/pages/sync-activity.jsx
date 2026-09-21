@@ -124,7 +124,7 @@ export default function SyncActivity() {
         <Select
           label="Direction"
           labelHidden
-          options={["", "Shopify → App", "App → Shopify"]}
+          options={["", "Sync from Shopify", "Sync to Shopify"]}
           value={directionFilter}
           onChange={setDirectionFilter}
         />
