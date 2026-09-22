@@ -10,8 +10,10 @@ import {
   Text,
   Tooltip,
 } from "@shopify/polaris";
-import { TitleBar } from "@shopify/app-bridge-react";
+import { TitleBar, Toast } from "@shopify/app-bridge-react";
 import { useNavigate } from "react-router-dom";
+import { useStoreTimezone, formatInStoreTimezone } from "../utils/storeTimezone";
+import { formatDateTime } from "../utils/timezone";
 import { useAuthenticatedFetch } from "../hooks/useAuthenticatedFetch";
 import { NotificationMajor } from "@shopify/polaris-icons";
 import {
@@ -42,7 +44,7 @@ function statusBadgeTone(status) {
   return "success";
 }
 
-function BulkJobRow({ job, isLast }) {
+function BulkJobRow({ job, isLast, timeZone }) {
   const [expanded, setExpanded] = useState(false);
   
   return (
@@ -60,7 +62,7 @@ function BulkJobRow({ job, isLast }) {
           </Badge>
         </span>
         <span style={s.colStarted}>
-          <Text as="span" color="subdued">{job.started ? new Date(job.started).toLocaleString() : '-'}</Text>
+          <Text as="span" color="subdued">{job.started ? formatInStoreTimezone(job.started, timeZone) : '-'}</Text>
         </span>
         <span style={s.colRecords}>
           <Text as="span">{job.records}</Text>
@@ -92,7 +94,29 @@ const RESPONSIVE_CSS = `
 export default function HomePage() {
   const navigate = useNavigate();
   const [data, setData] = useState(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("");
+  const [syncError, setSyncError] = useState("");
+  const timeZone = useStoreTimezone();
   const authenticatedFetch = useAuthenticatedFetch();
+
+  const handleSyncNow = async () => {
+    setIsSyncing(true);
+    setSyncError("");
+    try {
+      const response = await authenticatedFetch("/api/sync/pull", { method: "POST" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.message || "Catalog sync failed.");
+
+      const dashboardResponse = await authenticatedFetch("/api/dashboard");
+      if (dashboardResponse.ok) setData(await dashboardResponse.json());
+      setSyncMessage(payload.message || "Catalog synced successfully.");
+    } catch (syncFailure) {
+      setSyncError(syncFailure.message);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   useEffect(() => {
     async function loadDashboard() {
@@ -122,12 +146,15 @@ export default function HomePage() {
       <style>{RESPONSIVE_CSS}</style>
       <TitleBar
         title="Dashboard"
-        primaryAction={{ content: "Sync now", onAction: () => {} }}
+        primaryAction={{ content: "Sync now", onAction: handleSyncNow, loading: isSyncing }}
         secondaryActions={[
           { content: "🔔", onAction: () => navigate("/notifications") },
           { content: "Open Product Grid", onAction: () => navigate("/catalog") },
         ]}
       />
+
+      {syncMessage && <Toast content={syncMessage} onDismiss={() => setSyncMessage("")} />}
+      {syncError && <Toast content={syncError} error onDismiss={() => setSyncError("")} />}
 
       <div style={s.header}>
         <div>
@@ -149,14 +176,14 @@ export default function HomePage() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "16px" }}>
             {data.KPIS && data.KPIS.map(kpi => <KpiMiniCard key={kpi.label} kpi={kpi} />)}
           </div>
-          <div className="stretch-card-container" style={{ flexGrow: 1, minHeight: 0 }}><SyncActivityCard data={data.SYNC_ACTIVITY} /></div>
+          <div className="stretch-card-container" style={{ flexGrow: 1, minHeight: 0 }}><SyncActivityCard data={data.SYNC_ACTIVITY} timeZone={timeZone} /></div>
         </div>
       </div>
 
       {/* Bottom Section */}
       <div className="pmp-grid-half" style={s.gridHalf}>
         <div className="stretch-card-container" style={{ minWidth: 0 }}>
-          <BulkJobsCard data={data.BULK_JOBS} />
+          <BulkJobsCard data={data.BULK_JOBS} timeZone={timeZone} />
         </div>
         <div className="stretch-card-container" style={{ minWidth: 0 }}>
           <ExportCard navigate={navigate} />
@@ -222,7 +249,7 @@ function HealthRing({ value, size = 160, stroke = 12 }) {
       </svg>
       <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "row", gap: "2px" }}>
         <div style={{ fontSize: '36px', fontWeight: 'bold' }}>{value}</div>
-        <div style={{ fontSize: '14px', color: '#8a8f96', marginTop: '8px' }}>/100</div>
+        <div style={{ fontSize: '14px', color: '#8a8f96', marginTop: '8px' }}>%</div>
       </div>
     </div>
   );
@@ -275,7 +302,7 @@ function KpiMiniCard({ kpi }) {
 // Recent Bulk Jobs
 // ---------------------------------------------------------------------------
 
-function BulkJobsCard({ data }) {
+function BulkJobsCard({ data, timeZone }) {
   const navigate = useNavigate();
   if (!data) return null;
   return (
@@ -319,7 +346,7 @@ function BulkJobsCard({ data }) {
         </div>
       ) : (
         data.map((job, i) => (
-          <BulkJobRow key={job.id || i} job={job} isLast={i === data.length - 1} />
+          <BulkJobRow key={job.id || i} job={job} isLast={i === data.length - 1} timeZone={timeZone} />
         ))
       )}
     </Card>
@@ -330,7 +357,7 @@ function BulkJobsCard({ data }) {
 // Sync Activity
 // ---------------------------------------------------------------------------
 
-function SyncActivityRow({ job, isLast }) {
+function SyncActivityRow({ job, isLast, timeZone }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <div>
@@ -347,7 +374,7 @@ function SyncActivityRow({ job, isLast }) {
           </Badge>
         </span>
         <span style={s.colStarted}>
-          <Text as="span" color="subdued">{job.started ? new Date(job.started).toLocaleString() : '-'}</Text>
+            {job.started ? formatDateTime(job.started, timeZone) : '-'}
         </span>
         <span style={s.colRecords}>
           <Text as="span">{job.records}</Text>
@@ -366,7 +393,7 @@ function SyncActivityRow({ job, isLast }) {
   );
 }
 
-function SyncActivityCard({ data }) {
+function SyncActivityCard({ data, timeZone }) {
   const navigate = useNavigate();
   if (!data) return null;
   return (
@@ -410,7 +437,7 @@ function SyncActivityCard({ data }) {
         </div>
       ) : (
         data.map((job, i) => (
-          <SyncActivityRow key={job.id || i} job={job} isLast={i === data.length - 1} />
+          <SyncActivityRow key={job.id || i} job={job} isLast={i === data.length - 1} timeZone={timeZone} />
         ))
       )}
     </Card>
@@ -423,6 +450,7 @@ function SyncActivityCard({ data }) {
 
 function ExportCard({ navigate }) {
   const fetch = useAuthenticatedFetch();
+  const timeZone = useStoreTimezone();
   const padStyle = { ...s.pad, display: 'flex', flexDirection: 'column', flexGrow: 1 };
   const [data, setData] = useState([]);
   
@@ -434,7 +462,7 @@ function ExportCard({ navigate }) {
           const json = await response.json();
           const mapped = json.slice(0, 3).map(job => ({
             label: job.job_name,
-            date: new Date(job.created_at).toLocaleString(),
+            date: formatDateTime(job.created_at, timeZone),
             status: job.status
           }));
           setData(mapped);
@@ -444,7 +472,7 @@ function ExportCard({ navigate }) {
       }
     }
     loadExports();
-  }, []);
+  }, [timeZone]);
 
   return (
     <Card>
@@ -454,7 +482,7 @@ function ExportCard({ navigate }) {
           <span style={{ color: "#008060", fontWeight: 500, cursor: "pointer", fontSize: "14px" }} onClick={() => navigate("/export")}>Manage exports &rarr;</span>
         </div>
 
-        <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', marginTop: 12 }}>
+        <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', marginTop: 12 }}>
           {data.length === 0 ? (
             <div style={{ padding: "48px 0", display: "flex", flexDirection: "row", alignItems: "center" }}>
               <div style={{ width: 40, height: 40, borderRadius: "8px", backgroundColor: "#f4f6f8", display: "flex", alignItems: "center", justifyContent: "center", marginRight: 16, flexShrink: 0 }}>

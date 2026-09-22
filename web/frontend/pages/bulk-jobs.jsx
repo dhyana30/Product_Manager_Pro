@@ -11,6 +11,7 @@ import {
 import { ArrowLeftMinor } from "@shopify/polaris-icons";
 import { TitleBar, useAuthenticatedFetch } from "@shopify/app-bridge-react";
 import { useNavigate } from "react-router-dom";
+import { useStoreTimezone, formatInStoreTimezone } from "../utils/storeTimezone";
 
 export default function BulkJobs() {
   const fetch = useAuthenticatedFetch();
@@ -18,9 +19,12 @@ export default function BulkJobs() {
   
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const timeZone = useStoreTimezone();
   
   const [activeJob, setActiveJob] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
+
+  // timezone derived from StoreTimezoneProvider via useStoreTimezone hook
 
   const fetchJobs = useCallback(async () => {
     setLoading(true);
@@ -103,8 +107,8 @@ export default function BulkJobs() {
                             {job.status} {job.status === "Running" && job.progress > 0 ? `(${job.progress}%)` : ""}
                           </Badge>
                         </td>
-                        <td style={{ padding: "16px", whiteSpace: "nowrap", color: "#6d7175" }}>{job.started_at ? new Date(job.started_at).toLocaleString() : "-"}</td>
-                        <td style={{ padding: "16px", whiteSpace: "nowrap", color: "#6d7175" }}>{job.completed_at ? new Date(job.completed_at).toLocaleString() : "-"}</td>
+                        <td style={{ padding: "16px", whiteSpace: "nowrap", color: "#6d7175" }}>{job.started_at ? formatInStoreTimezone(job.started_at, timeZone) : "-"}</td>
+                        <td style={{ padding: "16px", whiteSpace: "nowrap", color: "#6d7175" }}>{job.completed_at ? formatInStoreTimezone(job.completed_at, timeZone) : "-"}</td>
                         <td style={{ padding: "16px", whiteSpace: "nowrap" }}><Text fontWeight="bold" as="span">{job.records_affected}</Text></td>
                       </tr>
                     );
@@ -141,8 +145,8 @@ export default function BulkJobs() {
                 </Badge>
               </p>
               <p><strong>Records processed:</strong> {activeJob.records_affected}</p>
-              <p><strong>Started At:</strong> {activeJob.started_at ? new Date(activeJob.started_at).toLocaleString() : "-"}</p>
-              <p><strong>Completed At:</strong> {activeJob.completed_at ? new Date(activeJob.completed_at).toLocaleString() : "-"}</p>
+              <p><strong>Started At:</strong> {activeJob.started_at ? formatInStoreTimezone(activeJob.started_at, timeZone) : "-"}</p>
+              <p><strong>Completed At:</strong> {activeJob.completed_at ? formatInStoreTimezone(activeJob.completed_at, timeZone) : "-"}</p>
               {activeJob.status === "Failed" && activeJob.error_message && (
                 <div style={{ marginTop: 12, padding: 12, backgroundColor: "#fff4f4", border: "1px solid #d82c0d", borderRadius: 4 }}>
                   <p style={{ color: "#d82c0d", margin: 0 }}><strong>Error:</strong> {activeJob.error_message}</p>

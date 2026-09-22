@@ -84,7 +84,7 @@ function SeoManagerContent() {
       }
 
       if (dateFilter !== "" && p.updated_at) {
-        const updatedDate = new Date(p.updated_at);
+        const updatedDate = new Date(p.updated_at.replace(' ', 'T') + 'Z');
         const now = new Date();
         const diffDays = (now - updatedDate) / (1000 * 60 * 60 * 24);
         if (dateFilter === "last-7-days" && diffDays > 7) return false;
@@ -204,6 +204,7 @@ function SeoManagerContent() {
   const [editData, setEditData] = useState({});
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [imagePopup, setImagePopup] = useState(null);
+  const [viewingProduct, setViewingProduct] = useState(null);
 
   const [isBulkEditing, setIsBulkEditing] = useState(false);
   const [bulkEditData, setBulkEditData] = useState({});
@@ -249,7 +250,6 @@ function SeoManagerContent() {
       setProducts(products.map(p => {
         if (bulkEditData[p.id]) {
           return {
-          ...fullProduct,
             ...p,
             seoTitle: bulkEditData[p.id].meta_title,
             metaDescription: bulkEditData[p.id].meta_description,
@@ -323,7 +323,8 @@ function SeoManagerContent() {
   const { selectedResources, allResourcesSelected, handleSelectionChange } = useIndexResourceState(paginatedProducts);
 
   const rowMarkup = paginatedProducts.map(
-    ({ id, title, sku, image_url, seoTitle, titleLength, metaDescription, descLength, handle, seoManagerStatus: status, issueCount }, index) => {
+    (product, index) => {
+      const { id, title, sku, image_url, seoTitle, titleLength, metaDescription, descLength, handle, seoManagerStatus: status, issueCount } = product;
       
       let badgeMarkup;
       if (status === 'Good') {
@@ -355,8 +356,8 @@ function SeoManagerContent() {
                   <span style={{ color: '#8c9196', fontSize: '12px' }}>Img</span>
                 </div>
               )}
-              <div onClick={(e) => e.stopPropagation()}>
-                <Text variant="bodyMd" fontWeight="bold">{title}</Text>
+              <div onClick={(e) => { e.stopPropagation(); setViewingProduct(product); }} style={{ cursor: 'pointer' }}>
+                <Text variant="bodyMd" fontWeight="bold"><span style={{ textDecoration: 'underline' }}>{title}</span></Text>
                 <Text variant="bodySm" color="subdued">SKU: {sku}</Text>
               </div>
             </Stack>
@@ -479,7 +480,128 @@ function SeoManagerContent() {
             ))}
           </div>
         </div>
-      </Page>
+      
+      {viewingProduct && (
+        <Modal
+          open={!!viewingProduct}
+          onClose={() => setViewingProduct(null)}
+          title="Product details"
+          primaryAction={{
+            content: 'Close',
+            onAction: () => setViewingProduct(null),
+          }}
+          large
+        >
+          <Modal.Section>
+            <div style={{ display: 'flex', gap: '24px', marginBottom: '32px' }}>
+              <div style={{ flexShrink: 0, width: '120px', height: '120px', border: '1px solid #dfe3e8', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: '#f4f6f8' }}>
+                {viewingProduct.image_url ? (
+                  <img src={viewingProduct.image_url} alt={viewingProduct.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <span style={{ color: '#8c9196', fontSize: '14px' }}>Img</span>
+                )}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+                  <Text variant="headingLg" as="h2" fontWeight="bold">{viewingProduct.title}</Text>
+                  <Badge status={viewingProduct.status === 'active' ? 'success' : 'info'}>
+                    {viewingProduct.status ? viewingProduct.status.toUpperCase() : 'DRAFT'}
+                  </Badge>
+                </div>
+                <div style={{ marginBottom: '24px' }}>
+                  <Text variant="bodyMd" color="subdued">/{viewingProduct.handle}</Text>
+                </div>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
+                  <div>
+                    <Text variant="bodySm" color="subdued">Price</Text>
+                    <div style={{ marginTop: '4px' }}>
+                      <Text variant="bodyMd" fontWeight="bold">${viewingProduct.price || '0.00'}</Text>
+                    </div>
+                  </div>
+                  <div>
+                    <Text variant="bodySm" color="subdued">Inventory</Text>
+                    <div style={{ marginTop: '4px' }}>
+                      <Text variant="bodyMd" fontWeight="bold">{viewingProduct.inventory || 0}</Text>
+                    </div>
+                  </div>
+                  <div>
+                    <Text variant="bodySm" color="subdued">Vendor</Text>
+                    <div style={{ marginTop: '4px' }}>
+                      <Text variant="bodyMd" fontWeight="bold">{viewingProduct.vendor || '—'}</Text>
+                    </div>
+                  </div>
+                  <div>
+                    <Text variant="bodySm" color="subdued">Product type</Text>
+                    <div style={{ marginTop: '4px' }}>
+                      <Text variant="bodyMd" fontWeight="bold">{viewingProduct.product_type || '—'}</Text>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '32px' }}>
+              <Text variant="headingMd" as="h3" fontWeight="bold">SEO details</Text>
+              <div style={{ marginTop: '16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+                <div>
+                  <Text variant="bodyMd" fontWeight="bold">Meta title</Text>
+                  <div style={{ marginTop: '8px' }}>
+                    <Text variant="bodyMd" color="subdued">{viewingProduct.meta_title || '—'}</Text>
+                  </div>
+                </div>
+                <div>
+                  <Text variant="bodyMd" fontWeight="bold">Meta description</Text>
+                  <div style={{ marginTop: '8px' }}>
+                    <Text variant="bodyMd" color="subdued">{viewingProduct.meta_description || '—'}</Text>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <Text variant="headingMd" as="h3" fontWeight="bold">Variants ({viewingProduct.variants_list ? viewingProduct.variants_list.length : 0})</Text>
+              <div style={{ marginTop: '16px', border: '1px solid #dfe3e8', borderRadius: '8px', overflow: 'hidden' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
+                  <thead>
+                    <tr style={{ background: '#f4f6f8' }}>
+                      <th style={{ padding: '12px 16px', fontWeight: 'bold' }}>Variant</th>
+                      <th style={{ padding: '12px 16px', fontWeight: 'bold' }}>SKU</th>
+                      <th style={{ padding: '12px 16px', fontWeight: 'bold' }}>Price</th>
+                      <th style={{ padding: '12px 16px', fontWeight: 'bold' }}>Inventory</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(viewingProduct.variants_list || []).map((v, idx) => (
+                      <tr key={v.id || idx} style={{ borderTop: '1px solid #dfe3e8' }}>
+                        <td style={{ padding: '12px 16px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <div style={{ flexShrink: 0, width: '32px', height: '32px', background: '#f4f6f8', border: '1px solid #dfe3e8', borderRadius: '4px', overflow: 'hidden' }}>
+                              {viewingProduct.image_url ? <img src={viewingProduct.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : null}
+                            </div>
+                            <Text variant="bodyMd">{v.title || 'Default Title'}</Text>
+                          </div>
+                        </td>
+                        <td style={{ padding: '12px 16px' }}>
+                          <Text variant="bodyMd" color="subdued">{v.sku || '—'}</Text>
+                        </td>
+                        <td style={{ padding: '12px 16px' }}>
+                          <Text variant="bodyMd">${v.price || '0.00'}</Text>
+                        </td>
+                        <td style={{ padding: '12px 16px' }}>
+                          <Text variant="bodyMd">{v.inventory || 0}</Text>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </Modal.Section>
+        </Modal>
+      )}
+
+    </Page>
     );
   }
 

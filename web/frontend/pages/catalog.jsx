@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState, Fragment, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { useStoreTimezone, formatInStoreTimezone, getStoreOffsetMs } from "../utils/storeTimezone";
+import { formatDateTime } from "../utils/timezone";
 import {
   ActionList,
   Badge,
@@ -95,6 +97,7 @@ export default function Catalog() {
   const [error, setError] = useState("");
   const [syncMessage, setSyncMessage] = useState("");
   const authenticatedFetch = useAuthenticatedFetch();
+  const timeZone = useStoreTimezone();
 
   const loadProducts = async () => {
     setIsLoading(true);
@@ -206,8 +209,8 @@ export default function Catalog() {
       }
 
       if (dateFilter !== "" && p.updated_at) {
-        const updatedDate = new Date(p.updated_at);
         const now = new Date();
+        const updatedDate = new Date(p.updated_at.replace(' ', 'T') + 'Z');
         const diffDays = (now - updatedDate) / (1000 * 60 * 60 * 24);
         if (dateFilter === "last-7-days" && diffDays > 7) return false;
         if (dateFilter === "last-30-days" && diffDays > 30) return false;
@@ -491,6 +494,7 @@ export default function Catalog() {
                   isSaving={isSavingEdit && editingId === row.id}
                   onViewProduct={(r) => setViewProduct(r)}
                   onImageClick={(r) => setImagePopup(r)}
+                  timeZone={timeZone}
                 />
           ))}
         </IndexTable>
@@ -653,6 +657,7 @@ export default function Catalog() {
 // ---------------------------------------------------------------------------
 
 function ProductRow({ row, index, columns, selected, isEditing, editData, onEditDataChange, onStartEdit, onCancelEdit, onSaveEdit, isSaving, onViewProduct, onImageClick }) {
+  const timeZone = useStoreTimezone();
   return (
     <IndexTable.Row id={String(row.id)} key={row.id} position={index} selected={selected}>
       {columns.map((col) => (
@@ -700,7 +705,7 @@ function ProductRow({ row, index, columns, selected, isEditing, editData, onEdit
               <Text as="span" color="subdued">{row.price ? '$'+row.price : "—"}</Text>
             )
           )}
-          {col.key === "published_at" && <Text as="span" color="subdued">{row.published_at || "—"}</Text>}
+          {col.key === "published_at" && <Text as="span" color="subdued">{row.published_at ? formatDateTime(row.published_at, timeZone) : "—"}</Text>}
         </IndexTable.Cell>
       ))}
       <IndexTable.Cell>
@@ -1828,7 +1833,7 @@ function ColumnsPopover({ activeColumns, onChange }) {
   );
 }
 
-function CatalogBulkEditor({ products, columns, onColumnsChange, onSave, isSaving, onDiscard }) {
+function CatalogBulkEditor({ products, columns, onColumnsChange, onSave, isSaving, onDiscard, timeZone }) {
   
   const [expanded, setExpanded] = useState({});
   const [changes, setChanges] = useState(() => {
@@ -1841,7 +1846,7 @@ function CatalogBulkEditor({ products, columns, onColumnsChange, onSave, isSavin
         product_category: p.product_category || "—",
         sales_channels: p.sales_channels || "Online Store",
         online_store_scheduled: p.online_store_scheduled || "false",
-        online_store_publish_date: p.published_at || "—",
+        online_store_publish_date: p.published_at ? formatDateTime(p.published_at, timeZone) : "—",
         testing: p.testing || "false",
         
         vendor: p.vendor || "",
@@ -1852,7 +1857,7 @@ function CatalogBulkEditor({ products, columns, onColumnsChange, onSave, isSavin
         meta_title: p.meta_title || "",
         meta_description: p.meta_description || "",
         handle: p.handle || "",
-        published_at: p.published_at || "",
+        published_at: p.published_at ? formatDateTime(p.published_at, timeZone) : "",
         description: (p.description !== undefined && p.description !== "—") ? p.description : (p.body_html || ""),
         template: p.template || "product",
         media: p.image_url || "",
@@ -2363,8 +2368,24 @@ function sortProducts(products, sortValue) {
   const sorted = [...products];
   if (sortValue === "title-asc") sorted.sort((a, b) => a.title.localeCompare(b.title));
   if (sortValue === "title-desc") sorted.sort((a, b) => b.title.localeCompare(a.title));
-  // price-* and created-* are left as-is: this endpoint doesn't return price
-  // or created_at yet, so there's nothing to sort by for those options.
+  if (sortValue === "price-asc" || sortValue === "price-desc") {
+    sorted.sort((a, b) => {
+      const aPrice = Number.parseFloat(a.price);
+      const bPrice = Number.parseFloat(b.price);
+      if (Number.isNaN(aPrice)) return 1;
+      if (Number.isNaN(bPrice)) return -1;
+      return sortValue === "price-asc" ? aPrice - bPrice : bPrice - aPrice;
+    });
+  }
+  if (sortValue === "created-asc" || sortValue === "created-desc") {
+    sorted.sort((a, b) => {
+      const aCreated = Date.parse(a.created_at || a.published_at || "");
+      const bCreated = Date.parse(b.created_at || b.published_at || "");
+      const aValue = Number.isNaN(aCreated) ? Number(a.id) : aCreated;
+      const bValue = Number.isNaN(bCreated) ? Number(b.id) : bCreated;
+      return sortValue === "created-asc" ? aValue - bValue : bValue - aValue;
+    });
+  }
   return sorted;
 }
 

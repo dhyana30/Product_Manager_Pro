@@ -2,8 +2,11 @@ import { useState } from "react";
 import { Button, Card, Layout, Page, Stack, Text, Toast } from "@shopify/polaris";
 import { TitleBar, useAuthenticatedFetch } from "@shopify/app-bridge-react";
 import { useNavigate } from "react-router-dom";
+import { useStoreTimezone } from "../utils/storeTimezone";
+import { formatDateTime } from "../utils/timezone";
 
 export default function Export() {
+  const timeZone = useStoreTimezone();
   const fetch = useAuthenticatedFetch();
   const navigate = useNavigate();
   const [isExporting, setIsExporting] = useState(false);
@@ -18,7 +21,7 @@ export default function Export() {
     try {
       const response = await fetch(`/api/export?format=${format}&include_images=true&include_variants=true`);
       if (!response.ok) throw new Error("Export failed");
-      
+
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -28,9 +31,9 @@ export default function Export() {
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
-      
+
       setToastMsg("Export completed successfully");
-      const newJob = { id: Date.now(), format, date: new Date().toLocaleString(), name: `products-export.${format}` };
+      const newJob = { id: Date.now(), format, date: formatDateTime(new Date().toISOString(), timeZone), name: `products-export.${format}` };
       const updatedJobs = [newJob, ...recentJobs].slice(0, 5);
       setRecentJobs(updatedJobs);
       localStorage.setItem('recent_exports', JSON.stringify(updatedJobs));
@@ -43,7 +46,6 @@ export default function Export() {
 
   return (
     <Page title="Export" backAction={{ content: "Dashboard", onAction: () => navigate("/") }}>
-      
       {toastMsg && <Toast content={toastMsg} onDismiss={() => setToastMsg("")} />}
       <Layout>
         <Layout.Section>
@@ -66,7 +68,6 @@ export default function Export() {
             </Card>
           </div>
         </Layout.Section>
-        
       </Layout>
     </Page>
   );

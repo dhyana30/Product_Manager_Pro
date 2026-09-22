@@ -14,10 +14,13 @@ import {
 } from "@shopify/polaris";
 import { TitleBar, useAuthenticatedFetch } from "@shopify/app-bridge-react";
 import { useNavigate } from "react-router-dom";
+import { useStoreTimezone } from "../utils/storeTimezone";
+import { formatDateTime } from "../utils/timezone";
 
 export default function SyncActivity() {
   const fetch = useAuthenticatedFetch();
   const navigate = useNavigate();
+  const timeZone = useStoreTimezone();
   
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -90,8 +93,8 @@ export default function SyncActivity() {
             {job.status} {job.status === "Running" && job.progress > 0 ? `(${job.progress}%)` : ""}
           </Badge>
         </IndexTable.Cell>
-        <IndexTable.Cell>{job.started_at ? new Date(job.started_at).toLocaleString() : "-"}</IndexTable.Cell>
-        <IndexTable.Cell>{job.completed_at ? new Date(job.completed_at).toLocaleString() : "-"}</IndexTable.Cell>
+        <IndexTable.Cell>{job.started_at ? formatDateTime(job.started_at, timeZone) : "-"}</IndexTable.Cell>
+        <IndexTable.Cell>{job.completed_at ? formatDateTime(job.completed_at, timeZone) : "-"}</IndexTable.Cell>
         <IndexTable.Cell>{job.records_affected}</IndexTable.Cell>
         <IndexTable.Cell>
           <Button plain onClick={() => { setActiveJob(job); setModalOpen(true); }}>
@@ -125,6 +128,7 @@ export default function SyncActivity() {
           label="Direction"
           labelHidden
           options={["", "Sync from Shopify", "Sync to Shopify"]}
+          options={["", "From Shopify", "To Shopify"]}
           value={directionFilter}
           onChange={setDirectionFilter}
         />
@@ -202,8 +206,8 @@ export default function SyncActivity() {
                 </Badge>
               </p>
               <p><strong>Records processed:</strong> {activeJob.records_affected}</p>
-              <p><strong>Started At:</strong> {activeJob.started_at ? new Date(activeJob.started_at).toLocaleString() : "-"}</p>
-              <p><strong>Completed At:</strong> {activeJob.completed_at ? new Date(activeJob.completed_at).toLocaleString() : "-"}</p>
+              <p><strong>Started At:</strong> {activeJob.started_at ? formatDateTime(activeJob.started_at, timeZone) : "-"}</p>
+              <p><strong>Completed At:</strong> {activeJob.completed_at ? formatDateTime(activeJob.completed_at, timeZone) : "-"}</p>
               {activeJob.error_message && (
                 <div style={{ marginTop: 12, padding: 12, backgroundColor: "#fff4f4", border: "1px solid #d82c0d", borderRadius: 4 }}>
                   <p style={{ color: "#d82c0d", margin: 0 }}><strong>Error:</strong> {activeJob.error_message}</p>

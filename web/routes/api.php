@@ -64,7 +64,7 @@ Route::middleware('shopify.auth')->group(function () {
                         'BULK_JOBS' => DB::table('bulk_jobs')
                 ->where('shop_domain', $shop)
                 ->orderBy('created_at', 'desc')
-                ->limit(10)
+                ->limit(4)
                 ->get()
                 ->map(fn($job) => [
                     'id' => $job->id,
@@ -80,12 +80,13 @@ Route::middleware('shopify.auth')->group(function () {
                 ->where('shop_domain', $shop)
                 ->whereIn('job_type', ['Catalog Sync', 'Catalog Push'])
                 ->orderBy('created_at', 'desc')
-                ->limit(10)
+                ->limit(4)
                 ->get()
                 ->map(fn($job) => [
                     'id' => $job->id,
                     'type' => $job->job_type,
                     'direction' => $job->job_type === 'Catalog Sync' ? 'Shopify → App' : 'App → Shopify',
+                    'direction' => $job->job_type === 'Catalog Sync' ? 'From Shopify' : 'To Shopify',
                     'status' => $job->status,
                     'started' => $job->started_at,
                     'completed' => $job->completed_at,
@@ -897,6 +898,22 @@ GRAPHQL,
         ]]);
     });
 
+    Route::get('/notifications/read', function (Request $request) {
+        $shop = $request->get('shopifySession')->getShop();
+        return response()->json(Cache::get("read_notifications:$shop", []));
+    });
+
+    Route::post('/notifications/read', function (Request $request) {
+        $shop = $request->get('shopifySession')->getShop();
+        $data = $request->validate([
+            'readIds' => ['required', 'array'],
+            'readIds.*' => ['integer'],
+        ]);
+        Cache::forever("read_notifications:$shop", $data['readIds']);
+
+        return response()->json(['success' => true]);
+    });
+
     Route::get('/automation', function (Request $request) {
         $shop = optional($request->get('shopifySession'))->getShop() ?: 'local';
         return response()->json(['data' => Cache::get("automation:$shop", [])]);
@@ -1119,6 +1136,7 @@ GRAPHQL,
 
         if ($request->has('direction') && !empty($request->direction)) {
             $type = $request->direction === 'Sync from Shopify' ? 'Catalog Sync' : 'Catalog Push';
+            $type = $request->direction === 'From Shopify' ? 'Catalog Sync' : 'Catalog Push';
             $query->where('job_type', $type);
         }
         if ($request->has('type') && !empty($request->type)) {
@@ -1130,6 +1148,7 @@ GRAPHQL,
 
         $jobs = $query->orderBy('created_at', 'desc')->get()->map(function($job) {
             $job->direction = $job->job_type === 'Catalog Sync' ? 'Sync from Shopify' : 'Sync to Shopify';
+            $job->direction = $job->job_type === 'Catalog Sync' ? 'From Shopify' : 'To Shopify';
             return $job;
         });
 
@@ -1310,12 +1329,16 @@ GRAPHQL;
 query {
   shop {
     currencyCode
+        ianaTimezone
   }
 }
 GRAPHQL;
         $response = $client->query(['query' => $query]);
         $body = $response->getDecodedBody();
-        return response()->json(['currencyCode' => $body['data']['shop']['currencyCode'] ?? 'USD']);
+                return response()->json([
+                        'currencyCode' => $body['data']['shop']['currencyCode'] ?? 'USD',
+                        'ianaTimezone' => $body['data']['shop']['ianaTimezone'] ?? 'UTC',
+                ]);
     });
     Route::get('/health', function (Illuminate\Http\Request $request) {
         $shop = $request->get('shopifySession')->getShop();

@@ -1,4 +1,6 @@
-import { useNavigate } from "react-router-dom";
+const fs = require('fs');
+
+const code = `import { useNavigate } from "react-router-dom";
 import React, { useState, useEffect } from 'react';
 import {
   Page,
@@ -217,7 +219,7 @@ export default function Notifications() {
                         flexShrink: 0 
                       }}>
                         <div style={{ color: "white", width: "20px", height: "20px", fill: "white" }}>
-                          <Icon source={iconConfig.source} />
+                          <Icon source={iconConfig.source} color="base" />
                         </div>
                       </div>
 
@@ -261,3 +263,7 @@ export default function Notifications() {
     </div>
   );
 }
+`;
+
+fs.writeFileSync('web/frontend/pages/notifications.jsx', code);
+console.log('Rewrote notifications.jsx');

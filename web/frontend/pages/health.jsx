@@ -503,7 +503,7 @@ function HealthRing({ value, size = 160, stroke = 12 }) {
       </svg>
       <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "row", gap: "2px" }}>
         <div style={{ fontSize: '36px', fontWeight: 'bold' }}>{value}</div>
-        <div style={{ fontSize: '14px', color: '#8a8f96', marginTop: '8px' }}>/100</div>
+        <div style={{ fontSize: '14px', color: '#8a8f96', marginTop: '8px' }}>%</div>
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import { BrowserRouter } from "react-router-dom";
 import { NavigationMenu } from "@shopify/app-bridge-react";
 import Routes from "./Routes";
+import { StoreTimezoneProvider } from "./utils/storeTimezone";
 
 import {
   AppBridgeProvider,
@@ -17,7 +18,8 @@ export default function App() {
     <PolarisProvider>
       <BrowserRouter>
         <AppBridgeProvider>
-          <QueryProvider>
+          <StoreTimezoneProvider>
+            <QueryProvider>
             <NavigationMenu
               navigationLinks={[
                 {
@@ -43,7 +45,8 @@ export default function App() {
               ]}
             />
             <Routes pages={pages} />
-          </QueryProvider>
+            </QueryProvider>
+          </StoreTimezoneProvider>
         </AppBridgeProvider>
       </BrowserRouter>
     </PolarisProvider>
