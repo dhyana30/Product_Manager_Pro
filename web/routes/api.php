@@ -42,15 +42,51 @@ Route::middleware('shopify.auth')->group(function () {
             ->where('products_cache.shop_domain', $shop)
             ->sum('available');
 
-        $completeness = $productsCount > 0 ? round(($productsWithImages / $productsCount) * 100) : 100;
-        $seoScore = $productsCount > 0 ? round(($productsWithMeta / $productsCount) * 100) : 100;
-        $imagesScore = $productsCount > 0 ? round(($productsWithImages / $productsCount) * 100) : 100;
+                $products = Illuminate\Support\Facades\DB::table('products_cache')->where('shop_domain', $shop)->get();
+        $variants = Illuminate\Support\Facades\DB::table('variants_cache')->whereIn('product_cache_id', $products->pluck('id'))->get();
         
-        $healthScoreValue = round(($completeness + $seoScore + $imagesScore + 100 + 100) / 5);
+        $missingImages = [];
+        $incompleteDesc = [];
+        $duplicateSkus = [];
+        $missingCats = [];
+        
+        $skuCounts = [];
+        foreach ($variants as $v) {
+            if ($v->sku) $skuCounts[$v->sku] = ($skuCounts[$v->sku] ?? 0) + 1;
+        }
+        $duplicateSkuList = array_keys(array_filter($skuCounts, fn($c) => $c > 1));
+        
+        foreach ($products as $p) {
+            $pVariants = $variants->where('product_cache_id', $p->id);
+            
+            if (!$p->image_url) $missingImages[] = $p->id;
+            if (!$p->meta_description || strlen($p->meta_description) < 40) $incompleteDesc[] = $p->id;
+            
+            $hasDup = false;
+            foreach ($pVariants as $v) {
+                if ($v->sku && in_array($v->sku, $duplicateSkuList)) {
+                    $hasDup = true;
+                    break;
+                }
+            }
+            if ($hasDup) $duplicateSkus[] = $p->id;
+            if (!$p->collections || $p->collections === '[]') $missingCats[] = $p->id;
+        }
+        
+        $affectedProductIds = array_unique(array_merge($missingImages, $incompleteDesc, $duplicateSkus, $missingCats));
+        $affectedCountVal = count($affectedProductIds);
+        
+        $totalProducts = $products->count();
+        $totalProducts = $totalProducts > 0 ? $totalProducts : 1;
+        
+        $imgScore = ($totalProducts - count($missingImages)) / $totalProducts * 100;
+        $descScore = ($totalProducts - count($incompleteDesc)) / $totalProducts * 100;
+        $healthScoreValue = round(($imgScore * 0.25) + ($descScore * 0.20) + 15 + 15 + 15 + 10);
 
         return response()->json([
             'HEALTH_SCORE' => [
                 'value' => $healthScoreValue,
+                'affectedCount' => $affectedCountVal,
                 'label' => $healthScoreValue > 80 ? 'Good' : ($healthScoreValue > 50 ? 'Fair' : 'Poor'),
                 'summary' => "Your catalog health " . ($healthScoreValue > 80 ? 'is good' : 'needs improvement') . ".",
                 'detail' => "Keep going! $healthScoreValue% of your catalog meets quality and completeness standards.",
@@ -134,7 +170,7 @@ Route::middleware('shopify.auth')->group(function () {
             $variantsByProduct[$v->product_cache_id][] = $vArray;
         }
 
-        $mappedProducts = $products->map(function ($product) use ($variantsByProduct) {
+        $mappedProducts = $products->map(function ($product) use ($variantsByProduct, $request) {
             $mergedVariants = [];
             
             foreach ($variantsByProduct[$product->id] ?? [] as $v) {
@@ -215,7 +251,16 @@ Route::middleware('shopify.auth')->group(function () {
                 'handle' => $product->handle,
                 'meta_title' => $product->meta_title,
                 'meta_description' => $product->meta_description,
-                'image_url' => $product->image_url,
+                'image_url' => (function($url) {
+                    if (!$url) return $url;
+                    if (str_contains($url, '/uploads/')) {
+                        return '/uploads/' . basename(parse_url($url, PHP_URL_PATH));
+                    }
+                    if (str_contains($url, '/assets/uploads/')) {
+                        return '/uploads/' . basename(parse_url($url, PHP_URL_PATH));
+                    }
+                    return $url;
+                })($product->image_url),
                 'media' => $product->image_url,
                 'sales_channels' => '—',
                 'variants_list' => $mergedVariants,
@@ -259,7 +304,7 @@ Route::post('/products/{id}/image', function (Request $request, $id) {
             return response()->json(['message' => 'Product not found.'], 404);
         }
 
-        $uploadDirectory = public_path('assets/uploads');
+        $uploadDirectory = public_path('uploads');
         if (!is_dir($uploadDirectory)) {
             mkdir($uploadDirectory, 0755, true);
         }
@@ -267,7 +312,31 @@ Route::post('/products/{id}/image', function (Request $request, $id) {
         $file = $request->file('image');
         $filename = uniqid('product-image-', true) . '.' . $file->getClientOriginalExtension();
         $file->move($uploadDirectory, $filename);
-        $imageUrl = asset('assets/uploads/' . $filename);
+        $imageUrl = '/uploads/' . $filename;
+        
+        $host = env('HOST');
+        $scheme = $request->header('X-Forwarded-Proto', 'https');
+        $absoluteImageUrl = $scheme . '://' . $host . $imageUrl;
+        
+        $session = $request->get('shopifySession');
+        $client = new \Shopify\Clients\Graphql($session->getShop(), $session->getAccessToken());
+        
+        try {
+            $client->query([
+                'query' => 'mutation fileCreate($files: [FileCreateInput!]!) { fileCreate(files: $files) { files { id alt } } }',
+                'variables' => [
+                    'files' => [
+                        [
+                            'alt' => pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME),
+                            'contentType' => 'IMAGE',
+                            'originalSource' => $absoluteImageUrl
+                        ]
+                    ]
+                ]
+            ]);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error uploading file to Shopify: ' . $e->getMessage());
+        }
 
         DB::table('products_cache')
             ->where('id', $id)
@@ -276,6 +345,7 @@ Route::post('/products/{id}/image', function (Request $request, $id) {
                 'image_url' => $imageUrl,
                 'image_name' => pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME),
                 'updated_at' => now(),
+                'sync_pending' => true,
             ]);
 
         return response()->json(['success' => true, 'image_url' => $imageUrl]);
@@ -386,7 +456,7 @@ Route::post('/products/{id}/image', function (Request $request, $id) {
         
         // Handle Media Uploads and Order
         $mediaInput = [];
-        $uploadDirectory = public_path('assets/uploads');
+        $uploadDirectory = public_path('uploads');
         if (!is_dir($uploadDirectory)) {
             mkdir($uploadDirectory, 0755, true);
         }
@@ -403,9 +473,9 @@ Route::post('/products/{id}/image', function (Request $request, $id) {
                     if ($file) {
                         $filename = uniqid('product-media-', true) . '.' . $file->getClientOriginalExtension();
                         $file->move($uploadDirectory, $filename);
-                        $host = $request->header('X-Forwarded-Host', $request->getHost());
+                        $host = env('HOST');
                         $scheme = $request->header('X-Forwarded-Proto', 'https');
-                        $imageUrl = $scheme . '://' . $host . '/assets/uploads/' . $filename;
+                        $imageUrl = $scheme . '://' . $host . '/uploads/' . $filename;
                         
                         $mediaInput[] = [
                             'originalSource' => $imageUrl,
@@ -426,9 +496,9 @@ Route::post('/products/{id}/image', function (Request $request, $id) {
             foreach ($files as $file) {
                 $filename = uniqid('product-media-', true) . '.' . $file->getClientOriginalExtension();
                 $file->move($uploadDirectory, $filename);
-                $host = $request->header('X-Forwarded-Host', $request->getHost());
+                $host = env('HOST');
                 $scheme = $request->header('X-Forwarded-Proto', 'https');
-                $imageUrl = $scheme . '://' . $host . '/assets/uploads/' . $filename;
+                $imageUrl = $scheme . '://' . $host . '/uploads/' . $filename;
                 
                 $mediaInput[] = [
                     'originalSource' => $imageUrl,
@@ -754,101 +824,119 @@ GRAPHQL;
         }
     });
 
-    Route::post('/sync/push', function (Request $request) {  // Fetch up to 10 recently updated products to avoid rate limits
-        $session = $request->get('shopifySession');
-        $client = new Graphql($session->getShop(), $session->getAccessToken());
-
+    Route::post('/sync/push', function (Request $request) {
+        $session = clone $request->get('shopifySession');
+        $shop = $session->getShop();
+        $token = $session->getAccessToken();
+        $host = env('HOST');
+        
+        $offset = (int) $request->input('offset', 0);
+        $limit = 5; // process 5 at a time to be safe from rate limits
+        
+        $client = new \Shopify\Clients\Graphql($shop, $token);
         $products = DB::table('products_cache')
-            ->where('shop_domain', $session->getShop())
-            ->orderByDesc('updated_at')
-            ->where('sync_pending', true)
-            ->limit(10)
+            ->where('shop_domain', $shop)
+            ->orderBy('id')
+            ->offset($offset)
+            ->limit($limit)
             ->get();
             
+        if ($products->isEmpty()) {
+            return response()->json(['more_remaining' => false, 'pushed_this_batch' => 0]);
+        }
+            
         $pushed = 0;
-
         foreach ($products as $product) {
             try {
-                // Determine Shopify status
                 $status = strtoupper($product->status) === 'ACTIVE' ? 'ACTIVE' : 'DRAFT';
+                $exists = false;
+                $productId = $product->product_gid;
                 
-                $response = $client->query([
-                    'query' => <<<'GRAPHQL'
-mutation productUpdate($input: ProductInput!) {
-  productUpdate(input: $input) {
-    product { id }
-    userErrors { field message }
-  }
-}
-GRAPHQL,
-                    'variables' => [
-                        'input' => [
-                            'id' => $product->product_gid,
-                            'title' => $product->title,
-                            'vendor' => $product->vendor,
-                            'status' => $status,
-                            'tags' => json_decode($product->tags, true) ?? [],
-                            'seo' => [
-                                'title' => $product->meta_title ?? '',
-                                'description' => $product->meta_description ?? ''
-                            ]
-                        ]
-                    ],
-                ]);
+                if ($productId) {
+                    $check = $client->query([
+                        'query' => 'query($id: ID!) { product(id: $id) { id } }',
+                        'variables' => ['id' => $productId]
+                    ])->getDecodedBody();
+                    if (!empty($check['data']['product']['id'])) {
+                        $exists = true;
+                    }
+                }
                 
-                // Sync the primary variant
-                $variant = DB::table('variants_cache')->where('product_cache_id', $product->id)->first();
-                if ($variant) {
+                $productInput = [
+                    'title' => $product->title,
+                    'vendor' => $product->vendor,
+                    'status' => $status,
+                    'tags' => json_decode($product->tags, true) ?? [],
+                    'seo' => [
+                        'title' => $product->meta_title ?? '',
+                        'description' => $product->meta_description ?? ''
+                    ]
+                ];
+                
+                if (!empty($product->handle)) {
+                    $productInput['handle'] = $product->handle;
+                }
+                
+                if ($exists) {
+                    $productInput['id'] = $productId;
                     $client->query([
-                        'query' => <<<'GRAPHQL'
-mutation productVariantUpdate($input: ProductVariantInput!) {
-  productVariantUpdate(input: $input) {
-    productVariant { id }
-    userErrors { field message }
-  }
-}
-GRAPHQL,
-                        'variables' => [
-                            'input' => [
-                                'id' => $variant->variant_gid,
-                                'sku' => $variant->sku,
-                                'price' => $variant->price
-                            ]
-                        ]
+                        'query' => 'mutation productUpdate($input: ProductInput!) { productUpdate(input: $input) { product { id } } }',
+                        'variables' => ['input' => $productInput]
                     ]);
+                } else {
+                    $response = $client->query([
+                        'query' => 'mutation productCreate($input: ProductInput!) { productCreate(input: $input) { product { id variants(first:1) { nodes { id inventoryItem { id } } } } } }',
+                        'variables' => ['input' => $productInput]
+                    ])->getDecodedBody();
                     
-                    // Push Inventory
-                    $inventory = DB::table('inventory_cache')->where('variant_cache_id', $variant->id)->first();
-                    if ($inventory && $inventory->location_gid) {
+                    $productId = $response['data']['productCreate']['product']['id'] ?? null;
+                    if ($productId) {
+                        DB::table('products_cache')->where('id', $product->id)->update(['product_gid' => $productId]);
+                        $defaultVariant = $response['data']['productCreate']['product']['variants']['nodes'][0] ?? null;
+                        if ($defaultVariant) {
+                            DB::table('variants_cache')->where('product_cache_id', $product->id)->update([
+                                'variant_gid' => $defaultVariant['id'],
+                                'inventory_item_gid' => $defaultVariant['inventoryItem']['id']
+                            ]);
+                        }
+                    }
+                }
+                
+                if (!$productId) {
+                    $pushed++;
+                    continue;
+                }
+
+                $variants = DB::table('variants_cache')->where('product_cache_id', $product->id)->get();
+                foreach ($variants as $variant) {
+                    if ($variant->variant_gid) {
                         $client->query([
-                            'query' => 'mutation inventorySet($input: InventorySetOnHandQuantitiesInput!) { inventorySetOnHandQuantities(input: $input) { userErrors { message } } }',
+                            'query' => 'mutation productVariantUpdate($input: ProductVariantInput!) { productVariantUpdate(input: $input) { productVariant { id } } }',
                             'variables' => [
                                 'input' => [
-                                    'reason' => 'correction',
-                                    'setQuantities' => [
-                                        [
-                                            'inventoryItemId' => $variant->inventory_item_id,
-                                            'locationId' => $inventory->location_gid,
-                                            'quantity' => (int) $inventory->available
-                                        ]
-                                    ]
+                                    'id' => $variant->variant_gid,
+                                    'price' => $variant->price,
+                                    'sku' => $variant->sku
                                 ]
                             ]
                         ]);
-                    }
-                    
-                    // Push Image Alt Text if available
-                    if ($product->image_alt && $product->image_name) {
-                        // Assuming image_name is the media ID stored previously
-                        if (str_contains($product->image_name, 'MediaImage')) {
+                        
+                        $inventory = DB::table('inventory_cache')->where('variant_cache_id', $variant->id)->first();
+                        $invItemId = $variant->inventory_item_gid ?? clone $variant->inventory_item_id ?? null;
+                        if (!$invItemId && isset($variant->inventory_item_id)) { $invItemId = $variant->inventory_item_id; }
+                        
+                        if ($inventory && $invItemId && $inventory->location_gid) {
                             $client->query([
-                                'query' => 'mutation productUpdateMedia($media: [UpdateMediaInput!]!, $productId: ID!) { productUpdateMedia(media: $media, productId: $productId) { userErrors { message } } }',
+                                'query' => 'mutation inventorySet($input: InventorySetOnHandQuantitiesInput!) { inventorySetOnHandQuantities(input: $input) { userErrors { message } } }',
                                 'variables' => [
-                                    'productId' => $product->product_gid,
-                                    'media' => [
-                                        [
-                                            'id' => $product->image_name,
-                                            'alt' => $product->image_alt
+                                    'input' => [
+                                        'reason' => 'correction',
+                                        'setQuantities' => [
+                                            [
+                                                'inventoryItemId' => $invItemId,
+                                                'locationId' => $inventory->location_gid,
+                                                'quantity' => (int) $inventory->available
+                                            ]
                                         ]
                                     ]
                                 ]
@@ -857,16 +945,119 @@ GRAPHQL,
                     }
                 }
                 
+                if ($product->image_url) {
+                    $mediaUrl = str_starts_with($product->image_url, '/uploads/') ? 'https://' . $host . $product->image_url : $product->image_url;
+                    
+                    \Illuminate\Support\Facades\Log::info("Sending mediaUrl to Shopify: " . $mediaUrl);
+                    $mediaExists = false;
+                    if ($exists && isset($existingMedia)) {
+                        foreach ($existingMedia as $mediaNode) {
+                            $nodeUrl = $mediaNode['image']['url'] ?? '';
+                            // Basic match: if we already have this exact Shopify CDN url, or if it's an existing image.
+                            // To prevent endless duplicates for local uploads, we can assume if the product has ANY media, it's synced.
+                            // Wait, if it's a local upload, it won't match a Shopify CDN url. 
+                            $baseNodeUrl = explode('?', $nodeUrl)[0];
+                            $baseMediaUrl = explode('?', $mediaUrl)[0];
+                            if ($baseNodeUrl === $baseMediaUrl || str_contains($product->image_name ?? '', $mediaNode['id'] ?? '')) {
+                                $mediaExists = true;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (!$mediaExists) {
+                        $isLocal = str_starts_with($product->image_url, '/uploads/');
+                        $finalSourceUrl = $mediaUrl;
+
+                        if ($isLocal) {
+                            $filePath = public_path($product->image_url);
+                            if (file_exists($filePath)) {
+                                $filename = basename($filePath);
+                                $mime = mime_content_type($filePath);
+
+                                $stagedUploadQuery = <<<'GRAPHQL'
+mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+  stagedUploadsCreate(input: $input) {
+    stagedTargets {
+      url
+      resourceUrl
+      parameters {
+        name
+        value
+      }
+    }
+  }
+}
+GRAPHQL;
+                                $stagedRes = $client->query([
+                                    'query' => $stagedUploadQuery,
+                                    'variables' => [
+                                        'input' => [
+                                            [
+                                                'filename' => $filename,
+                                                'mimeType' => $mime,
+                                                'httpMethod' => 'POST',
+                                                'resource' => 'IMAGE'
+                                            ]
+                                        ]
+                                    ]
+                                ])->getDecodedBody();
+
+                                $target = $stagedRes['data']['stagedUploadsCreate']['stagedTargets'][0] ?? null;
+                                if ($target) {
+                                    $postData = [];
+                                    foreach ($target['parameters'] as $param) {
+                                        $postData[$param['name']] = $param['value'];
+                                    }
+                                    
+                                    $httpResponse = \Illuminate\Support\Facades\Http::attach(
+                                        'file', file_get_contents($filePath), $filename
+                                    )->post($target['url'], $postData);
+
+                                    if ($httpResponse->successful()) {
+                                        $finalSourceUrl = $target['resourceUrl'];
+                                    }
+                                }
+                            }
+                        }
+
+                        $res = $client->query([
+                            'query' => 'mutation productCreateMedia($media: [CreateMediaInput!]!, $productId: ID!) { productCreateMedia(media: $media, productId: $productId) { media { id mediaErrors { message } } userErrors { field message } } }',
+                            'variables' => [
+                                'productId' => $productId,
+                                'media' => [
+                                    [
+                                        'alt' => $product->image_alt ?: ($product->title . ' image'),
+                                        'mediaContentType' => 'IMAGE',
+                                        'originalSource' => $finalSourceUrl
+                                    ]
+                                ]
+                            ]
+                        ])->getDecodedBody();
+                        
+                        $newMediaId = $res['data']['productCreateMedia']['media'][0]['id'] ?? null;
+                        if ($newMediaId && $isLocal) {
+                            DB::table('products_cache')->where('id', $product->id)->update([
+                                'image_name' => $newMediaId
+                            ]);
+                        }
+                    }
+                }
+
                 $pushed++;
                 DB::table('products_cache')->where('id', $product->id)->update(['sync_pending' => false]);
                 DB::table('variants_cache')->where('product_cache_id', $product->id)->update(['sync_pending' => false]);
+                
             } catch (\Throwable $exception) {
-                report($exception);
+                \Illuminate\Support\Facades\Log::error('Push sync error: ' . $exception->getMessage());
+                $pushed++; // increment so we don't get stuck in infinite loop
             }
         }
+        
+        $hasMore = DB::table('products_cache')->where('shop_domain', $shop)->count() > ($offset + $pushed);
+        \Illuminate\Support\Facades\Log::info("Push sync batch complete. Offset: $offset, Pushed: $pushed, HasMore: " . ($hasMore ? 'true' : 'false') . ", Total count: " . DB::table('products_cache')->where('shop_domain', $shop)->count());
 
-        DB::table('bulk_jobs')->where('id', $jobId ?? 0)->update(['status' => 'Completed', 'records_affected' => $pushed, 'progress' => 100, 'completed_at' => now()]);
-        return response()->json(['message' => 'Push sync completed successfully', 'pushed' => $pushed, 'completed_at' => now()->toIso8601String()]);
+        return response()->json(['more_remaining' => $hasMore, 'pushed_this_batch' => $pushed, 'completed_at' => now()->toIso8601String()]);
     });
 
     Route::get('/inventory', function (Request $request) {
@@ -1157,14 +1348,18 @@ GRAPHQL,
 
     Route::get('/locations', function (Request $request) {
         $session = $request->get('shopifySession');
-        $client = new Graphql($session->getShop(), $session->getAccessToken());
+        $shop = $session->getShop();
+        $client = new Graphql($shop, $session->getAccessToken());
 
         try {
-            $response = $client->query([
-                'query' => '{ locations(first: 50) { nodes { id name } } }',
-            ]);
-            $body = $response->getDecodedBody();
-            return response()->json($body['data']['locations']['nodes'] ?? []);
+            $data = \Illuminate\Support\Facades\Cache::remember("locations_{$shop}", 3600, function () use ($client) {
+                $response = $client->query([
+                    'query' => '{ locations(first: 50) { nodes { id name } } }',
+                ]);
+                $body = $response->getDecodedBody();
+                return $body['data']['locations']['nodes'] ?? [];
+            });
+            return response()->json($data);
         } catch (\Throwable $exception) {
             return response()->json(['error' => 'Failed to fetch locations'], 500);
         }
@@ -1323,23 +1518,28 @@ GRAPHQL;
 
     Route::get('/shop-settings', function (Request $request) {
         $session = $request->get('shopifySession');
-        $client = new Graphql($session->getShop(), $session->getAccessToken());
+        $shop = $session->getShop();
+        $client = new Graphql($shop, $session->getAccessToken());
         
-        $query = <<<'GRAPHQL'
+        $data = \Illuminate\Support\Facades\Cache::remember("shop_settings_{$shop}", 3600, function () use ($client) {
+            $query = <<<'GRAPHQL'
 query {
   shop {
     currencyCode
-        ianaTimezone
+    ianaTimezone
   }
 }
 GRAPHQL;
-        $response = $client->query(['query' => $query]);
-        $body = $response->getDecodedBody();
-                return response()->json([
-                        'currencyCode' => $body['data']['shop']['currencyCode'] ?? 'USD',
-                        'ianaTimezone' => $body['data']['shop']['ianaTimezone'] ?? 'UTC',
-                ]);
+            $response = $client->query(['query' => $query]);
+            $body = $response->getDecodedBody();
+            return [
+                'currencyCode' => $body['data']['shop']['currencyCode'] ?? 'USD',
+                'ianaTimezone' => $body['data']['shop']['ianaTimezone'] ?? 'UTC',
+            ];
+        });
+        return response()->json($data);
     });
+
     Route::get('/health', function (Illuminate\Http\Request $request) {
         $shop = $request->get('shopifySession')->getShop();
         $products = Illuminate\Support\Facades\DB::table('products_cache')->where('shop_domain', $shop)->get();
@@ -1419,3 +1619,8 @@ GRAPHQL;
         ]);
     });
 });
+
+
+
+
+

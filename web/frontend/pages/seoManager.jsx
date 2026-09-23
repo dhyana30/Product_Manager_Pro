@@ -22,7 +22,7 @@ import {
   FormLayout,
   TextField
 } from '@shopify/polaris';
-import { ExternalMinor, ViewMinor, SearchMinor, FilterMinor, ArrowLeftMinor, SortMinor } from '@shopify/polaris-icons';
+import { ExternalMinor, ViewMinor, SearchMinor, FilterMinor, ArrowLeftMinor, SortMinor, ImageMajor } from '@shopify/polaris-icons';
 import { TitleBar } from '@shopify/app-bridge-react';
 import { PaginationBar } from "../components";
 import { useAuthenticatedFetch } from "../hooks/useAuthenticatedFetch";
@@ -353,7 +353,7 @@ function SeoManagerContent() {
                 </div>
               ) : (
                 <div style={{ width: '40px', height: '40px', background: '#f4f6f8', border: '1px solid #dfe3e8', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <span style={{ color: '#8c9196', fontSize: '12px' }}>Img</span>
+                  <Icon source={ImageMajor} color="subdued" />
                 </div>
               )}
               <div onClick={(e) => { e.stopPropagation(); setViewingProduct(product); }} style={{ cursor: 'pointer' }}>
@@ -498,7 +498,7 @@ function SeoManagerContent() {
                 {viewingProduct.image_url ? (
                   <img src={viewingProduct.image_url} alt={viewingProduct.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 ) : (
-                  <span style={{ color: '#8c9196', fontSize: '14px' }}>Img</span>
+                  <Icon source={ImageMajor} color="subdued" />
                 )}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -577,7 +577,7 @@ function SeoManagerContent() {
                         <td style={{ padding: '12px 16px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                             <div style={{ flexShrink: 0, width: '32px', height: '32px', background: '#f4f6f8', border: '1px solid #dfe3e8', borderRadius: '4px', overflow: 'hidden' }}>
-                              {viewingProduct.image_url ? <img src={viewingProduct.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : null}
+                              {viewingProduct.image_url ? <img src={viewingProduct.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'center'}}><Icon source={ImageMajor} color="subdued" /></div>}
                             </div>
                             <Text variant="bodyMd">{v.title || 'Default Title'}</Text>
                           </div>

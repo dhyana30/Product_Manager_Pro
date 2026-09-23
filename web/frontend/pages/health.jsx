@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Page,
   Card,
@@ -10,64 +10,82 @@ import {
   TextField,
   ButtonGroup,
 } from "@shopify/polaris";
-import { TitleBar } from "@shopify/app-bridge-react";
+import { TitleBar, useAuthenticatedFetch } from "@shopify/app-bridge-react";
+import * as XLSX from "xlsx";
 import { useNavigate } from "react-router-dom";
 
 export default function HealthDetails() {
   const navigate = useNavigate();
+  const fetch = useAuthenticatedFetch();
   const [selectedTab, setSelectedTab] = useState("all");
   const [searchValue, setSearchValue] = useState("");
+  
+  const [loading, setLoading] = useState(true);
+  const [isScanning, setIsScanning] = useState(false);
+  const [healthData, setHealthData] = useState({
+    score: 0,
+    affectedCount: 0,
+    totalCount: 0,
+    missingImagesCount: 0,
+    incompleteDescCount: 0,
+    duplicateSkuCount: 0,
+    missingCatsCount: 0,
+    affectedProducts: []
+  });
 
-  const affectedProducts = [
-    {
-      id: 1,
-      title: "Aria Ceramic Mug — Sand",
-      sku: "SKU-10234",
-      issue: "Missing product image",
-      severity: "Critical",
-      status: "Open",
-    },
-    {
-      id: 2,
-      title: "Linen Throw Blanket, Ivory",
-      sku: "SKU-10298",
-      issue: "Description under 40 words",
-      severity: "Warning",
-      status: "Open",
-    },
-    {
-      id: 3,
-      title: "Oak Bookshelf — 5 Tier",
-      sku: "SKU-10199",
-      issue: "Duplicate SKU detected",
-      severity: "Warning",
-      status: "In review",
-    },
-    {
-      id: 4,
-      title: "Wool Throw Pillow, Charcoal",
-      sku: "SKU-10312",
-      issue: "Not mapped to category",
-      severity: "Info",
-      status: "Open",
-    },
-    {
-      id: 5,
-      title: "Glass Carafe Set",
-      sku: "SKU-10256",
-      issue: "Missing product image",
-      severity: "Critical",
-      status: "Open",
-    },
-  ];
+  const fetchHealth = useCallback(async (scanning = false) => {
+    if (scanning) setIsScanning(true);
+    else setLoading(true);
+    try {
+      const response = await fetch("/api/health");
+      const data = await response.json();
+      setHealthData(data);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+      setIsScanning(false);
+    }
+  }, [fetch]);
 
+  useEffect(() => {
+    fetchHealth();
+  }, [fetchHealth]);
+
+  const affectedProducts = healthData.affectedProducts || [];
+  const handleExport = () => {
+    if (!healthData.affectedProducts || healthData.affectedProducts.length === 0) {
+      alert("No issues to export.");
+      return;
+    }
+    
+    // Prepare data for Excel
+    const data = healthData.affectedProducts.map(p => ({
+      "ID": p.id,
+      "Title": p.title,
+      "SKU": p.sku,
+      "Issue": p.issue,
+      "Severity": p.severity,
+      "Status": p.status
+    }));
+    
+    // Create workbook and worksheet
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Affected Products");
+    
+    // Generate and download Excel file
+    XLSX.writeFile(workbook, `catalog_health_report_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  
   return (
     <Page
       title="Catalog Health"
       subtitle="A breakdown of the checks behind your score, what's failing, and which products are affected — last scanned 10:15 AM."
       backAction={{ content: "Dashboard", onAction: () => navigate("/") }}
-      primaryAction={{ content: "Re-run health scan" }}
-      secondaryActions={[{ content: "Export report" }]}
+      primaryAction={{ content: "Re-run health scan", onAction: () => fetchHealth(true), loading: isScanning }}
+      secondaryActions={[{ content: "Export report", onAction: handleExport }]}
       fullWidth
     >
       <TitleBar title="Catalog Health" />
@@ -79,14 +97,14 @@ export default function HealthDetails() {
         <div className="stretch-card-container">
           <Card>
             <div className="score-card-content" style={{ height: "100%" }}>
-            <HealthRing value={46} />
+            <HealthRing value={healthData.score} />
             <div style={{ marginTop: "24px" }}>
               <Text as="h2" variant="headingMd" color="warning">
                 Needs attention
               </Text>
               <div style={{ marginTop: "4px" }}>
                 <Text as="p" color="subdued" variant="bodySm">
-                  54 products below standard
+                  {healthData.affectedCount} products below standard
                 </Text>
               </div>
             </div>
@@ -98,11 +116,11 @@ export default function HealthDetails() {
               }}
             >
               <Text as="p" color="subdued">
-                Keep going — 46% of your catalog meets quality and completeness
+                Keep going — {healthData.score}% of your catalog meets quality and completeness
                 standards.
               </Text>
             </div>
-            <Button plain>↻ Re-run scan</Button>
+            
           </div>
         </Card>
         </div>
@@ -183,7 +201,7 @@ export default function HealthDetails() {
                     <span className="dot red"></span>
                     <Text as="p" fontWeight="medium">Missing product images</Text>
                   </div>
-                  <Text as="p" color="subdued" variant="bodySm">24 products · 25% weight</Text>
+                  <Text as="p" color="subdued" variant="bodySm">{healthData.missingImagesCount} products · 25% weight</Text>
                 </div>
                 <Divider />
                 <div className="fix-item">
@@ -191,7 +209,7 @@ export default function HealthDetails() {
                     <span className="dot red"></span>
                     <Text as="p" fontWeight="medium">Incomplete descriptions</Text>
                   </div>
-                  <Text as="p" color="subdued" variant="bodySm">17 products · 20% weight</Text>
+                  <Text as="p" color="subdued" variant="bodySm">{healthData.incompleteDescCount} products · 20% weight</Text>
                 </div>
                 <Divider />
                 <div className="fix-item">
@@ -199,7 +217,7 @@ export default function HealthDetails() {
                     <span className="dot orange"></span>
                     <Text as="p" fontWeight="medium">Missing categories</Text>
                   </div>
-                  <Text as="p" color="subdued" variant="bodySm">11 products · 15% weight</Text>
+                  <Text as="p" color="subdued" variant="bodySm">{healthData.missingCatsCount} products · 15% weight</Text>
                 </div>
               </div>
             </div>
@@ -306,8 +324,7 @@ export default function HealthDetails() {
               </div>
               <div className="ct-col-weight"><Text as="span">25% of score</Text></div>
               <div className="ct-col-affected">
-                <Text as="p" fontWeight="bold">24 products</Text>
-                <Text as="p" color="subdued" variant="bodySm">of 102</Text>
+                <Text as="p" fontWeight="bold">{healthData.missingImagesCount} products</Text>\n<Text as="p" color="subdued" variant="bodySm">of {healthData.totalCount}</Text>
               </div>
               <div className="ct-col-action"><Button plain>Fix all →</Button></div>
             </div>
@@ -323,8 +340,7 @@ export default function HealthDetails() {
               </div>
               <div className="ct-col-weight"><Text as="span">20% of score</Text></div>
               <div className="ct-col-affected">
-                <Text as="p" fontWeight="bold">17 products</Text>
-                <Text as="p" color="subdued" variant="bodySm">of 102</Text>
+                <Text as="p" fontWeight="bold">{healthData.incompleteDescCount} products</Text>\n<Text as="p" color="subdued" variant="bodySm">of {healthData.totalCount}</Text>
               </div>
               <div className="ct-col-action"><Button plain>Fix all →</Button></div>
             </div>
@@ -340,8 +356,7 @@ export default function HealthDetails() {
               </div>
               <div className="ct-col-weight"><Text as="span">15% of score</Text></div>
               <div className="ct-col-affected">
-                <Text as="p" fontWeight="bold">6 products</Text>
-                <Text as="p" color="subdued" variant="bodySm">of 102</Text>
+                <Text as="p" fontWeight="bold">{healthData.duplicateSkuCount} products</Text>\n<Text as="p" color="subdued" variant="bodySm">of {healthData.totalCount}</Text>
               </div>
               <div className="ct-col-action"><span className="review-link">Review →</span></div>
             </div>
@@ -357,8 +372,7 @@ export default function HealthDetails() {
               </div>
               <div className="ct-col-weight"><Text as="span">15% of score</Text></div>
               <div className="ct-col-affected">
-                <Text as="p" fontWeight="bold">11 products</Text>
-                <Text as="p" color="subdued" variant="bodySm">of 102</Text>
+                <Text as="p" fontWeight="bold">{healthData.missingCatsCount} products</Text>\n<Text as="p" color="subdued" variant="bodySm">of {healthData.totalCount}</Text>
               </div>
               <div className="ct-col-action"><span className="review-link">Review →</span></div>
             </div>
@@ -374,8 +388,7 @@ export default function HealthDetails() {
               </div>
               <div className="ct-col-weight"><Text as="span">15% of score</Text></div>
               <div className="ct-col-affected">
-                <Text as="p" fontWeight="bold">0 products</Text>
-                <Text as="p" color="subdued" variant="bodySm">of 102</Text>
+                <Text as="p" fontWeight="bold">0 products</Text>\n<Text as="p" color="subdued" variant="bodySm">of {healthData.totalCount}</Text>
               </div>
               <div className="ct-col-action"><Text as="span" color="subdued">Passing</Text></div>
             </div>
@@ -391,8 +404,7 @@ export default function HealthDetails() {
               </div>
               <div className="ct-col-weight"><Text as="span">10% of score</Text></div>
               <div className="ct-col-affected">
-                <Text as="p" fontWeight="bold">3 products</Text>
-                <Text as="p" color="subdued" variant="bodySm">of 102</Text>
+                <Text as="p" fontWeight="bold">0 products</Text>\n<Text as="p" color="subdued" variant="bodySm">of {healthData.totalCount}</Text>
               </div>
               <div className="ct-col-action"><Text as="span" color="subdued">Passing</Text></div>
             </div>
@@ -404,13 +416,13 @@ export default function HealthDetails() {
       {/* Affected Products Table */}
       <div className="section-header">
         <Text as="h2" variant="headingLg">Affected products</Text>
-        <Text as="p" color="subdued">54 products with at least one open issue</Text>
+        <Text as="p" color="subdued">{healthData.affectedCount} products with at least one open issue</Text>
       </div>
       
       <Card padding="0">
         <div style={{ padding: "16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px" }}>
           <div className="custom-tabs">
-            <button className={`custom-tab ${selectedTab === 'all' ? 'active' : ''}`} onClick={() => setSelectedTab('all')}>All (54)</button>
+            <button className={`custom-tab ${selectedTab === 'all' ? 'active' : ''}`} onClick={() => setSelectedTab('all')}>All ({affectedProducts.length})</button>
             <button className={`custom-tab ${selectedTab === 'critical' ? 'active' : ''}`} onClick={() => setSelectedTab('critical')}>Critical (18)</button>
             <button className={`custom-tab ${selectedTab === 'warning' ? 'active' : ''}`} onClick={() => setSelectedTab('warning')}>Warning (27)</button>
             <button className={`custom-tab ${selectedTab === 'info' ? 'active' : ''}`} onClick={() => setSelectedTab('info')}>Info (9)</button>

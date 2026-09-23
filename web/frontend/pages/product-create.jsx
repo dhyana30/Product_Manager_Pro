@@ -1282,7 +1282,7 @@ export default function ProductCreate() {
               <div>
                 <CategoryPicker selectedCategory={category} onSelect={setCategory} />
                 <Text variant="bodySm" color="subdued" as="p" style={{ marginTop: '4px' }}>
-                  Determines tax rates and adds metafields to improve search, filters, and cross-channel sales
+                  Determines tax rates and adds metafields to improve search, filters, and cross-channel sales.
                 </Text>
               </div>
             </Card>
@@ -1300,14 +1300,14 @@ export default function ProductCreate() {
                   onClick={() => setPricingExpanded(true)}
                 >
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    <div style={{ display: 'inline-flex', alignItems: 'center', backgroundColor: '#ebebeb', padding: '4px 12px', borderRadius: '6px', fontSize: '13px', color: '#202223' }}>Compare-at</div>
-                    <div style={{ display: 'inline-flex', alignItems: 'center', backgroundColor: '#ebebeb', padding: '4px 12px', borderRadius: '6px', fontSize: '13px', color: '#202223' }}>Unit price</div>
-                    <div style={{ display: 'inline-flex', alignItems: 'center', backgroundColor: '#ebebeb', padding: '4px 12px', borderRadius: '6px', fontSize: '13px', color: '#202223' }}>
-                      Charge tax <span style={{ marginLeft: '8px', backgroundColor: '#d1d3d4', padding: '1px 8px', borderRadius: '12px', fontSize: '12px' }}>Yes</span>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', backgroundColor: '#fff', border: '1px solid #c9cccf', padding: '4px 12px', borderRadius: '16px', fontSize: '13px', color: '#202223' }}>Compare-at</div>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', backgroundColor: '#fff', border: '1px solid #c9cccf', padding: '4px 12px', borderRadius: '16px', fontSize: '13px', color: '#202223' }}>Unit price</div>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', backgroundColor: '#fff', border: '1px solid #c9cccf', padding: '4px 12px', borderRadius: '16px', fontSize: '13px', color: '#202223' }}>
+                      Charge tax <span style={{ marginLeft: '8px', backgroundColor: '#005e4d', color: '#fff', padding: '1px 8px', borderRadius: '12px', fontSize: '12px' }}>Yes</span>
                     </div>
-                    <div style={{ display: 'inline-flex', alignItems: 'center', backgroundColor: '#ebebeb', padding: '4px 12px', borderRadius: '6px', fontSize: '13px', color: '#202223' }}>Cost per item</div>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', backgroundColor: '#fff', border: '1px solid #c9cccf', padding: '4px 12px', borderRadius: '16px', fontSize: '13px', color: '#202223' }}>Cost per item</div>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', backgroundColor: '#fff', border: '1px solid #c9cccf', padding: '4px 12px', borderRadius: '16px', fontSize: '13px', color: '#202223', gap: '4px' }}>More <svg viewBox="0 0 20 20" width="12" height="12" fill="currentColor"><path d="M10 14a.997.997 0 0 1-.707-.293l-5-5a.999.999 0 1 1 1.414-1.414L10 11.586l4.293-4.293a.999.999 0 1 1 1.414 1.414l-5 5A.997.997 0 0 1 10 14z"/></svg></div>
                   </div>
-                  <Icon source={ChevronDownMinor} color="subdued" />
                 </div>
               )}
               
@@ -1451,7 +1451,7 @@ export default function ProductCreate() {
                   <div 
                     onClick={() => setInventoryTracked(!inventoryTracked)}
                     style={{ 
-                      width: '36px', height: '20px', backgroundColor: inventoryTracked ? '#2c6ecb' : '#dfe3e8', 
+                      width: '36px', height: '20px', backgroundColor: inventoryTracked ? '#005e4d' : '#dfe3e8', 
                       borderRadius: '10px', position: 'relative', cursor: 'pointer', transition: 'background-color 0.2s' 
                     }}
                   >
@@ -1466,11 +1466,8 @@ export default function ProductCreate() {
 
               <div style={{ margin: '0 20px', border: '1px solid #dfe3e8', borderRadius: '8px', overflow: 'hidden' }}>
                 <div style={{ padding: '12px 16px', backgroundColor: '#f9fafb', borderBottom: '1px solid #dfe3e8', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }} onClick={() => setLocationsModalOpen(true)}>
-                    <Text as="span" color="subdued">Quantity</Text>
-                    <Icon source={EditMinor} color="subdued" />
-                  </div>
-                  <Text as="span" color="subdued"><span style={{ borderBottom: '1px dashed #8c9196' }}>Quantity</span></Text>
+                  <Text as="span" color="subdued" fontWeight="bold" variant="bodySm">LOCATION</Text>
+                  <Text as="span" color="subdued" fontWeight="bold" variant="bodySm">QUANTITY</Text>
                 </div>
                 
                 {locations.filter(l => l.checked).map((loc, i, arr) => (
@@ -2081,26 +2078,26 @@ export default function ProductCreate() {
               </div>
               
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div style={{ display: 'flex', alignItems: 'center' }}>
-                  <div style={{ width: '30%' }}><span style={{ fontSize: '14px', color: '#202223' }}>Category</span></div>
-                  <div style={{ flex: 1 }}><TextField labelHidden autoComplete="off" /></div>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontSize: '14px', color: '#202223', marginBottom: '4px', fontWeight: 600 }}>Category</span>
+                  <TextField labelHidden autoComplete="off" />
                 </div>
                 
-                <div style={{ display: 'flex', alignItems: 'center' }}>
-                  <div style={{ width: '30%' }}><span style={{ fontSize: '14px', color: '#202223' }}>Z8 Offers</span></div>
-                  <div style={{ flex: 1 }}><TextField labelHidden autoComplete="off" /></div>
+                <div style={{ display: 'flex', flexDirection: 'column', marginTop: '16px' }}>
+                  <span style={{ fontSize: '14px', color: '#202223', marginBottom: '4px', fontWeight: 600 }}>Z8 Offers</span>
+                  <TextField labelHidden autoComplete="off" />
                 </div>
 
                 {disclosuresActive ? (
-                  <div style={{ display: 'flex', alignItems: 'center' }}>
-                    <div style={{ width: '30%' }}><span style={{ fontSize: '14px', color: '#202223' }}>Disclosures</span></div>
-                    <div style={{ flex: 1 }}><TextField labelHidden autoComplete="off" /></div>
-                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', marginTop: '16px' }}>
+                  <span style={{ fontSize: '14px', color: '#202223', marginBottom: '4px', fontWeight: 600 }}>Disclosures</span>
+                  <TextField labelHidden autoComplete="off" />
+                </div>
                 ) : (
                   <div style={{ display: 'flex', alignItems: 'center', marginTop: '4px' }}>
                     <div 
                       onClick={() => setDisclosuresActive(true)}
-                      style={{ display: 'inline-flex', alignItems: 'center', padding: '4px 12px', backgroundColor: '#e4e5e7', borderRadius: '16px', cursor: 'pointer', gap: '4px' }}
+                      style={{ display: 'inline-flex', alignItems: 'center', padding: '4px 12px', backgroundColor: '#fff', border: '1px solid #c9cccf', borderRadius: '16px', cursor: 'pointer', gap: '4px', color: '#5c5f62', fontWeight: 500 }}
                     >
                       <svg viewBox="0 0 20 20" width="12" height="12" fill="#5c5f62"><path d="M10 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16Zm1 8h3a1 1 0 1 1 0 2h-3v3a1 1 0 1 1-2 0v-3H6a1 1 0 1 1 0-2h3V6a1 1 0 1 1 2 0v4Z"/></svg>
                       <span style={{ fontSize: '13px', color: '#5c5f62', fontWeight: 500 }}>Disclosures</span>
@@ -2117,11 +2114,12 @@ export default function ProductCreate() {
                   {!seoExpanded && (
                     <div style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }} onClick={() => setSeoExpanded(true)}>
                       <Icon source={EditMinor} color="subdued" />
+                      <span style={{ marginLeft: '4px', color: '#005e4d', fontWeight: 600, fontSize: '13px' }}>Edit</span>
                     </div>
                   )}
                 </div>
-                <div style={{ marginTop: '16px' }}>
-                  <span style={{ fontSize: '14px', color: '#202223' }}>Add a title and description to see how this product might appear in a search engine listing</span>
+                <div style={{ marginTop: '8px' }}>
+                  <span style={{ fontSize: '14px', color: '#6d7175' }}>Add a title and description to see how this product might appear in a search engine listing.</span>
                 </div>
               </div>
               {seoExpanded && (
@@ -2206,6 +2204,7 @@ export default function ProductCreate() {
                   ))}
                 </div>
               </Popover>
+              
             </Card>
 
             <Card>
@@ -2392,10 +2391,10 @@ export default function ProductCreate() {
                       </div>
                       <div 
                         onClick={() => setCollectionsPopoverOpen(!collectionsPopoverOpen)}
-                        style={{ cursor: 'pointer', padding: '6px 12px', border: '1px solid #c9cccf', borderRadius: '4px', display: 'flex', flexWrap: 'wrap', gap: '4px', backgroundColor: '#fff', boxShadow: 'inset 0 1px 0 0 rgba(255, 255, 255, 0.5), 0 1px 2px 0 rgba(0, 0, 0, 0.05)', minHeight: '32px' }}
+                        style={{ cursor: 'pointer', display: 'flex', flexWrap: 'wrap', gap: '4px', minHeight: '32px' }}
                       >
                         {selectedCollections.length === 0 && (
-                          <div style={{ display: 'inline-flex', alignItems: 'center', backgroundColor: '#ebebeb', padding: '2px 8px', borderRadius: '12px', fontSize: '13px', gap: '4px', color: '#5c5f62', fontWeight: 500 }}>
+                          <div style={{ display: 'inline-flex', alignItems: 'center', backgroundColor: '#fff', border: '1px solid #c9cccf', padding: '4px 12px', borderRadius: '16px', fontSize: '13px', gap: '4px', color: '#5c5f62', fontWeight: 500 }}>
                             <svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor">
                               <path fillRule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm0-2a6 6 0 1 0 0-12 6 6 0 0 0 0 12Zm1-5h2a1 1 0 1 1 0 2h-2v2a1 1 0 1 1-2 0v-2H7a1 1 0 1 1 0-2h2V7a1 1 0 1 1 2 0v2Z" clipRule="evenodd"/>
                             </svg>
@@ -2485,10 +2484,10 @@ export default function ProductCreate() {
                       </div>
                       <div 
                         onClick={() => setTagsPopoverOpen(!tagsPopoverOpen)}
-                        style={{ cursor: 'pointer', padding: '6px 12px', border: '1px solid #c9cccf', borderRadius: '4px', display: 'flex', flexWrap: 'wrap', gap: '4px', backgroundColor: '#fff', boxShadow: 'inset 0 1px 0 0 rgba(255, 255, 255, 0.5), 0 1px 2px 0 rgba(0, 0, 0, 0.05)', minHeight: '32px' }}
+                        style={{ cursor: 'pointer', display: 'flex', flexWrap: 'wrap', gap: '4px', minHeight: '32px' }}
                       >
                         {selectedTags.length === 0 && (
-                          <div style={{ display: 'inline-flex', alignItems: 'center', backgroundColor: '#ebebeb', padding: '2px 8px', borderRadius: '12px', fontSize: '13px', gap: '4px', color: '#5c5f62', fontWeight: 500 }}>
+                          <div style={{ display: 'inline-flex', alignItems: 'center', backgroundColor: '#fff', border: '1px solid #c9cccf', padding: '4px 12px', borderRadius: '16px', fontSize: '13px', gap: '4px', color: '#5c5f62', fontWeight: 500 }}>
                             <svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor">
                               <path fillRule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm0-2a6 6 0 1 0 0-12 6 6 0 0 0 0 12Zm1-5h2a1 1 0 1 1 0 2h-2v2a1 1 0 1 1-2 0v-2H7a1 1 0 1 1 0-2h2V7a1 1 0 1 1 2 0v2Z" clipRule="evenodd"/>
                             </svg>

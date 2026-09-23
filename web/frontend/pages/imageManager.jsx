@@ -21,7 +21,7 @@ import {
   Modal,
   Filters
 } from '@shopify/polaris';
-import { ViewMinor, SearchMinor, FilterMinor, SortMinor, DeleteMinor, EditMinor, ArrowLeftMinor } from '@shopify/polaris-icons';
+import { ViewMinor, SearchMinor, FilterMinor, SortMinor, DeleteMinor, EditMinor, ArrowLeftMinor, ImageMajor } from '@shopify/polaris-icons';
 import { TitleBar } from '@shopify/app-bridge-react';
 import { PaginationBar, FileSelectorModal } from "../components";
 import { useAuthenticatedFetch } from "../hooks/useAuthenticatedFetch";
@@ -178,6 +178,23 @@ function ImageManagerContent() {
   const [uploadPreview, setUploadPreview] = useState('');
   const [selectedExistingImage, setSelectedExistingImage] = useState(null);
   const [isUploadFileSelectorOpen, setIsUploadFileSelectorOpen] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handleSync = async () => {
+    setIsSyncing(true);
+    try {
+      const response = await authenticatedFetch('/api/sync/push', { method: 'POST' });
+      if (!response.ok) throw new Error('Sync failed');
+      app.dispatch(Toast.Action.SHOW, { message: 'Sync completed successfully' });
+      loadProducts();
+    } catch (err) {
+      app.dispatch(Toast.Action.SHOW, { message: err.message, isError: true });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+  const [popupUploadFile, setPopupUploadFile] = useState(null);
+  const [isSavingPopupImage, setIsSavingPopupImage] = useState(false);
   const handleStartEdit = (product) => {
     setEditingId(product.id);
     setEditData({ title: product.title, sku: product.sku });
@@ -204,6 +221,49 @@ function ImageManagerContent() {
       console.error(err);
     } finally {
       setIsSavingEdit(false);
+    }
+  };
+
+  
+  const handleSavePopupImage = async () => {
+    if (!imagePopup) return;
+    setIsSavingPopupImage(true);
+    try {
+      let response;
+      if (popupUploadFile) {
+        const formData = new FormData();
+        formData.append('image', popupUploadFile);
+        response = await authenticatedFetch(`/api/products/${imagePopup.id}/image`, {
+          method: 'POST',
+          body: formData,
+        });
+      } else {
+        response = await authenticatedFetch(`/api/products/${imagePopup.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image_url: imagePopup.image_url }),
+        });
+      }
+      
+      if (!response.ok) throw new Error('Failed to save image');
+      const payload = await response.json();
+      const finalImageUrl = popupUploadFile ? payload.image_url : imagePopup.image_url;
+      
+      setProducts((current) => current.map((p) => (
+        p.id === imagePopup.id ? { ...p, image_url: finalImageUrl, imageCount: 1, missingImages: 0, imageManagerStatus: 'Good' } : p
+      )));
+      
+      if (viewingProduct && viewingProduct.id === imagePopup.id) {
+        setViewingProduct({ ...viewingProduct, image_url: finalImageUrl });
+      }
+      
+      setImagePopup(null);
+      setPopupUploadFile(null);
+    } catch (err) {
+      console.error(err);
+      setError('Failed to save image');
+    } finally {
+      setIsSavingPopupImage(false);
     }
   };
 
@@ -388,7 +448,7 @@ function ImageManagerContent() {
                 </div>
               ) : (
                 <div style={{ width: '40px', height: '40px', background: '#f4f6f8', border: '1px solid #dfe3e8', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <span style={{ color: '#8c9196', fontSize: '12px' }}>Img</span>
+                  <Icon source={ImageMajor} color="subdued" />
                 </div>
               )}
               <div onClick={(e) => e.stopPropagation()}>
@@ -458,7 +518,7 @@ function ImageManagerContent() {
                       {product.image_url ? (
                         <img src={product.image_url} alt={data.image_alt || product.title} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
                       ) : (
-                        <Text color="subdued">No image available</Text>
+                        <Icon source={ImageMajor} color="subdued" />
                       )}
                     </div>
                     <div style={{ flex: '1 1 320px', minWidth: '260px' }}>
@@ -488,125 +548,7 @@ function ImageManagerContent() {
           </div>
         </div>
       
-      {viewingProduct && (
-        <Modal
-          open={!!viewingProduct}
-          onClose={() => setViewingProduct(null)}
-          title="Product details"
-          primaryAction={{
-            content: 'Close',
-            onAction: () => setViewingProduct(null),
-          }}
-          large
-        >
-          <Modal.Section>
-            <div style={{ display: 'flex', gap: '24px', marginBottom: '32px' }}>
-              <div style={{ flexShrink: 0, width: '120px', height: '120px', border: '1px solid #dfe3e8', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: '#f4f6f8' }}>
-                {viewingProduct.image_url ? (
-                  <img src={viewingProduct.image_url} alt={viewingProduct.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                ) : (
-                  <span style={{ color: '#8c9196', fontSize: '14px' }}>Img</span>
-                )}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-                  <Text variant="headingLg" as="h2" fontWeight="bold">{viewingProduct.title}</Text>
-                  <Badge status={viewingProduct.status === 'active' ? 'success' : 'info'}>
-                    {viewingProduct.status ? viewingProduct.status.toUpperCase() : 'DRAFT'}
-                  </Badge>
-                </div>
-                <div style={{ marginBottom: '24px' }}>
-                  <Text variant="bodyMd" color="subdued">/{viewingProduct.handle}</Text>
-                </div>
-                
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
-                  <div>
-                    <Text variant="bodySm" color="subdued">Price</Text>
-                    <div style={{ marginTop: '4px' }}>
-                      <Text variant="bodyMd" fontWeight="bold">${viewingProduct.price || '0.00'}</Text>
-                    </div>
-                  </div>
-                  <div>
-                    <Text variant="bodySm" color="subdued">Inventory</Text>
-                    <div style={{ marginTop: '4px' }}>
-                      <Text variant="bodyMd" fontWeight="bold">{viewingProduct.inventory || 0}</Text>
-                    </div>
-                  </div>
-                  <div>
-                    <Text variant="bodySm" color="subdued">Vendor</Text>
-                    <div style={{ marginTop: '4px' }}>
-                      <Text variant="bodyMd" fontWeight="bold">{viewingProduct.vendor || '—'}</Text>
-                    </div>
-                  </div>
-                  <div>
-                    <Text variant="bodySm" color="subdued">Product type</Text>
-                    <div style={{ marginTop: '4px' }}>
-                      <Text variant="bodyMd" fontWeight="bold">{viewingProduct.product_type || '—'}</Text>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div style={{ marginBottom: '32px' }}>
-              <Text variant="headingMd" as="h3" fontWeight="bold">SEO details</Text>
-              <div style={{ marginTop: '16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
-                <div>
-                  <Text variant="bodyMd" fontWeight="bold">Meta title</Text>
-                  <div style={{ marginTop: '8px' }}>
-                    <Text variant="bodyMd" color="subdued">{viewingProduct.meta_title || '—'}</Text>
-                  </div>
-                </div>
-                <div>
-                  <Text variant="bodyMd" fontWeight="bold">Meta description</Text>
-                  <div style={{ marginTop: '8px' }}>
-                    <Text variant="bodyMd" color="subdued">{viewingProduct.meta_description || '—'}</Text>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <Text variant="headingMd" as="h3" fontWeight="bold">Variants ({viewingProduct.variants_list ? viewingProduct.variants_list.length : 0})</Text>
-              <div style={{ marginTop: '16px', border: '1px solid #dfe3e8', borderRadius: '8px', overflow: 'hidden' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
-                  <thead>
-                    <tr style={{ background: '#f4f6f8' }}>
-                      <th style={{ padding: '12px 16px', fontWeight: 'bold' }}>Variant</th>
-                      <th style={{ padding: '12px 16px', fontWeight: 'bold' }}>SKU</th>
-                      <th style={{ padding: '12px 16px', fontWeight: 'bold' }}>Price</th>
-                      <th style={{ padding: '12px 16px', fontWeight: 'bold' }}>Inventory</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(viewingProduct.variants_list || []).map((v, idx) => (
-                      <tr key={v.id || idx} style={{ borderTop: '1px solid #dfe3e8' }}>
-                        <td style={{ padding: '12px 16px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                            <div style={{ flexShrink: 0, width: '32px', height: '32px', background: '#f4f6f8', border: '1px solid #dfe3e8', borderRadius: '4px', overflow: 'hidden' }}>
-                              {viewingProduct.image_url ? <img src={viewingProduct.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : null}
-                            </div>
-                            <Text variant="bodyMd">{v.title || 'Default Title'}</Text>
-                          </div>
-                        </td>
-                        <td style={{ padding: '12px 16px' }}>
-                          <Text variant="bodyMd" color="subdued">{v.sku || '—'}</Text>
-                        </td>
-                        <td style={{ padding: '12px 16px' }}>
-                          <Text variant="bodyMd">${v.price || '0.00'}</Text>
-                        </td>
-                        <td style={{ padding: '12px 16px' }}>
-                          <Text variant="bodyMd">{v.inventory || 0}</Text>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </Modal.Section>
-        </Modal>
-      )}
+      
 
     </Page>
     );
@@ -683,6 +625,7 @@ function ImageManagerContent() {
           <Text as="p" color="subdued" variant="bodyMd">Audit and optimize product images to improve quality and discoverability.</Text>
         </div>
         <ButtonGroup>
+          <Button onClick={handleSync} loading={isSyncing}>Sync</Button>
           <Button primary onClick={() => setIsUploadPageOpen(true)}>Upload</Button>
         </ButtonGroup>
       </Stack>
@@ -796,12 +739,16 @@ function ImageManagerContent() {
           title={`Edit image: ${imagePopup.title}`}
           primaryAction={{
             content: 'Save',
-            onAction: () => setImagePopup(null),
+            onAction: handleSavePopupImage,
+            loading: isSavingPopupImage
           }}
           secondaryActions={[
             {
               content: 'Cancel',
-              onAction: () => setImagePopup(null),
+              onAction: () => {
+                setImagePopup(null);
+                setPopupUploadFile(null);
+              },
             },
           ]}
           large
@@ -818,7 +765,7 @@ function ImageManagerContent() {
                   {imagePopup.image_url ? (
                     <img src={imagePopup.image_url} alt={imagePopup.title} style={{ maxWidth: '100%', maxHeight: '300px', objectFit: 'contain' }} />
                   ) : (
-                    <div style={{ padding: '40px', color: '#8c9196' }}>No image available</div>
+                    <Icon source={ImageMajor} color="subdued" />
                   )}
                   <div style={{ position: 'absolute', bottom: '8px', right: '8px' }}>
                     <Popover
@@ -847,6 +794,7 @@ function ImageManagerContent() {
                               input.onchange = (e) => {
                                 const file = e.target.files[0];
                                 if (file) {
+                                  setPopupUploadFile(file);
                                   const reader = new FileReader();
                                   reader.onload = (e) => {
                                     setImagePopup({ ...imagePopup, image_url: e.target.result });
@@ -933,9 +881,130 @@ function ImageManagerContent() {
         onClose={() => setIsFileSelectorOpen(false)}
         onSelect={(file) => {
           setIsFileSelectorOpen(false);
-          setImagePopup({ ...imagePopup, image_url: file.url });
+          setPopupUploadFile(null);
+          setImagePopup({ ...imagePopup, image_url: file.url, image_name: file.id });
         }}
       />
+
+{viewingProduct && (
+        <Modal
+          open={!!viewingProduct}
+          onClose={() => setViewingProduct(null)}
+          title="Product details"
+          primaryAction={{
+            content: 'Close',
+            onAction: () => setViewingProduct(null),
+          }}
+          large
+        >
+          <Modal.Section>
+            <div style={{ display: 'flex', gap: '24px', marginBottom: '32px' }}>
+              <div style={{ flexShrink: 0, width: '120px', height: '120px', border: '1px solid #dfe3e8', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: '#f4f6f8' }}>
+                {viewingProduct.image_url ? (
+                  <img src={viewingProduct.image_url} alt={viewingProduct.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <Icon source={ImageMajor} color="subdued" />
+                )}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+                  <Text variant="headingLg" as="h2" fontWeight="bold">{viewingProduct.title}</Text>
+                  <Badge status={(viewingProduct.status?.label || viewingProduct.status) === 'active' ? 'success' : 'info'}>
+                    {viewingProduct.status ? String(viewingProduct.status.label || viewingProduct.status).toUpperCase() : 'DRAFT'}
+                  </Badge>
+                </div>
+                <div style={{ marginBottom: '24px' }}>
+                  <Text variant="bodyMd" color="subdued">/{viewingProduct.handle}</Text>
+                </div>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
+                  <div>
+                    <Text variant="bodySm" color="subdued">Price</Text>
+                    <div style={{ marginTop: '4px' }}>
+                      <Text variant="bodyMd" fontWeight="bold">${viewingProduct.price || '0.00'}</Text>
+                    </div>
+                  </div>
+                  <div>
+                    <Text variant="bodySm" color="subdued">Inventory</Text>
+                    <div style={{ marginTop: '4px' }}>
+                      <Text variant="bodyMd" fontWeight="bold">{viewingProduct.inventory || 0}</Text>
+                    </div>
+                  </div>
+                  <div>
+                    <Text variant="bodySm" color="subdued">Vendor</Text>
+                    <div style={{ marginTop: '4px' }}>
+                      <Text variant="bodyMd" fontWeight="bold">{viewingProduct.vendor || '—'}</Text>
+                    </div>
+                  </div>
+                  <div>
+                    <Text variant="bodySm" color="subdued">Product type</Text>
+                    <div style={{ marginTop: '4px' }}>
+                      <Text variant="bodyMd" fontWeight="bold">{viewingProduct.product_type || '—'}</Text>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '32px' }}>
+              <Text variant="headingMd" as="h3" fontWeight="bold">SEO details</Text>
+              <div style={{ marginTop: '16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+                <div>
+                  <Text variant="bodyMd" fontWeight="bold">Meta title</Text>
+                  <div style={{ marginTop: '8px' }}>
+                    <Text variant="bodyMd" color="subdued">{viewingProduct.meta_title || '—'}</Text>
+                  </div>
+                </div>
+                <div>
+                  <Text variant="bodyMd" fontWeight="bold">Meta description</Text>
+                  <div style={{ marginTop: '8px' }}>
+                    <Text variant="bodyMd" color="subdued">{viewingProduct.meta_description || '—'}</Text>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <Text variant="headingMd" as="h3" fontWeight="bold">Variants ({viewingProduct.variants_list ? viewingProduct.variants_list.length : 0})</Text>
+              <div style={{ marginTop: '16px', border: '1px solid #dfe3e8', borderRadius: '8px', overflow: 'hidden' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
+                  <thead>
+                    <tr style={{ background: '#f4f6f8' }}>
+                      <th style={{ padding: '12px 16px', fontWeight: 'bold' }}>Variant</th>
+                      <th style={{ padding: '12px 16px', fontWeight: 'bold' }}>SKU</th>
+                      <th style={{ padding: '12px 16px', fontWeight: 'bold' }}>Price</th>
+                      <th style={{ padding: '12px 16px', fontWeight: 'bold' }}>Inventory</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(viewingProduct.variants_list || []).map((v, idx) => (
+                      <tr key={v.id || idx} style={{ borderTop: '1px solid #dfe3e8' }}>
+                        <td style={{ padding: '12px 16px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <div style={{ flexShrink: 0, width: '32px', height: '32px', background: '#f4f6f8', border: '1px solid #dfe3e8', borderRadius: '4px', overflow: 'hidden' }}>
+                              {viewingProduct.image_url ? <img src={viewingProduct.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'center'}}><Icon source={ImageMajor} color="subdued" /></div>}
+                            </div>
+                            <Text variant="bodyMd">{v.title || 'Default Title'}</Text>
+                          </div>
+                        </td>
+                        <td style={{ padding: '12px 16px' }}>
+                          <Text variant="bodyMd" color="subdued">{v.sku || '—'}</Text>
+                        </td>
+                        <td style={{ padding: '12px 16px' }}>
+                          <Text variant="bodyMd">${v.price || '0.00'}</Text>
+                        </td>
+                        <td style={{ padding: '12px 16px' }}>
+                          <Text variant="bodyMd">{v.inventory || 0}</Text>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </Modal.Section>
+        </Modal>
+      )}
 
       <FileSelectorModal
         open={isUploadFileSelectorOpen}

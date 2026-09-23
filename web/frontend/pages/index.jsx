@@ -214,7 +214,7 @@ function HealthScoreCard({ data }) {
         <div style={{ marginTop: "24px" }}>
           <Text as="h2" variant="headingMd" color="warning">Needs attention</Text>
           <div style={{ marginTop: "4px" }}>
-            <Text as="p" color="subdued" variant="bodySm">54 products below standard</Text>
+            <Text as="p" color="subdued" variant="bodySm">{data?.affectedCount || 54} products below standard</Text>
           </div>
         </div>
         <div style={{ marginTop: "16px", marginBottom: "24px", maxWidth: "240px" }}>

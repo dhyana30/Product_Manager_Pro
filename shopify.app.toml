@@ -2,7 +2,7 @@
 
 client_id = "93c072cf33f39a4a8b20ce7e82984b38"
 name = "Product_Manager_Pro"
-application_url = "https://apartment-foster-intention-hobby.trycloudflare.com"
+application_url = "https://particularly-attach-spyware-achieving.trycloudflare.com"
 embedded = true
 
 [build]
@@ -17,6 +17,6 @@ scopes = "read_files,read_inventory,read_locations,read_publications,write_produ
 
 [auth]
 redirect_urls = [
-  "https://apartment-foster-intention-hobby.trycloudflare.com/api/auth",
-  "https://apartment-foster-intention-hobby.trycloudflare.com/api/auth/callback"
+  "https://particularly-attach-spyware-achieving.trycloudflare.com/api/auth",
+  "https://particularly-attach-spyware-achieving.trycloudflare.com/api/auth/callback"
 ]

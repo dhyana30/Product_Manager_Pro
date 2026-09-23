@@ -123,12 +123,13 @@ export default function Catalog() {
   const syncCatalog = async () => {
     setIsSyncing(true);
     setError("");
+    setSyncMessage("Syncing from Shopify... It may take a few minutes.");
     try {
       const response = await authenticatedFetch("/api/sync/pull", { method: "POST" });
       const payload = await readApiResponse(response);
       if (!response.ok) throw new Error(payload.message || "Catalog sync failed.");
       await loadProducts();
-      setSyncMessage(payload.message || "Catalog synced successfully.");
+      setSyncMessage("Sync successful from Shopify");
     } catch (syncError) {
       setError(syncError.message);
     } finally {
@@ -139,11 +140,28 @@ export default function Catalog() {
   const syncToShopify = async () => {
     setIsPushing(true);
     setError("");
+    setSyncMessage("Syncing to Shopify... It may take a few minutes.");
     try {
-      const response = await authenticatedFetch("/api/sync/push", { method: "POST" });
-      const payload = await readApiResponse(response);
-      if (!response.ok) throw new Error(payload.message || "Push sync failed.");
-      setSyncMessage(payload.message || "Changes pushed to Shopify successfully.");
+      let offset = 0;
+      let more = true;
+      let totalPushed = 0;
+      while (more) {
+        const response = await authenticatedFetch("/api/sync/push", {
+          method: "POST",
+          body: JSON.stringify({ offset }),
+          headers: { "Content-Type": "application/json" }
+        });
+        const payload = await readApiResponse(response);
+        if (!response.ok) throw new Error(payload.message || "Push sync failed.");
+        
+        offset += payload.pushed_this_batch;
+        totalPushed += payload.pushed_this_batch;
+        more = payload.more_remaining;
+        
+        setSyncMessage(`${totalPushed} products synced`);
+      }
+      setSyncMessage("Sync successful to Shopify");
+      loadProducts();
     } catch (pushError) {
       setError(pushError.message);
     } finally {
@@ -273,25 +291,28 @@ export default function Catalog() {
   };
 
   const [isApplyingPrice, setIsApplyingPrice] = useState(false);
-  const handleBulkPrice = async (type, value, round) => {
+  const handleBulkPrice = async (adjustments) => {
     setIsApplyingPrice(true);
     try {
       const selectedProducts = products.filter(p => selectedResources.includes(String(p.id)));
       for (const p of selectedProducts) {
+        const adj = adjustments[p.id];
+        if (!adj) continue;
+
         let currentPrice = parseFloat(p.price);
         if (isNaN(currentPrice)) currentPrice = 0;
         
         let newPrice = currentPrice;
-        const val = parseFloat(value);
-        if (type === "percentage") {
+        const val = parseFloat(adj.value || 0);
+        if (adj.type === "percentage") {
           newPrice = currentPrice * (1 + val / 100);
         } else {
           newPrice = currentPrice + val;
         }
         
-        if (round === "2") newPrice = Math.round(newPrice * 100) / 100;
-        else if (round === "99") newPrice = Math.floor(newPrice) + 0.99;
-        else if (round === "0") newPrice = Math.round(newPrice);
+        if (adj.round === "2") newPrice = Math.round(newPrice * 100) / 100;
+        else if (adj.round === "99") newPrice = Math.floor(newPrice) + 0.99;
+        else if (adj.round === "0") newPrice = Math.round(newPrice);
         
         await authenticatedFetch(`/api/products/${p.id}`, {
           method: "PUT",
@@ -466,7 +487,7 @@ export default function Catalog() {
                 count={selectedResources.length}
                 onSelect={() => setBulkEditorOpen(true)}
               />
-              <PriceButton disabled={selectedResources.length === 0} count={selectedResources.length} onApply={handleBulkPrice} loading={isApplyingPrice} />
+              <PriceButton disabled={selectedResources.length === 0} selectedProducts={products.filter(p => selectedResources.includes(String(p.id)))} onApply={handleBulkPrice} loading={isApplyingPrice} />
             </div>
           </Filters>
         </div>
@@ -1746,21 +1767,6 @@ const BULK_COLUMN_GROUPS = [
       { key: "origin", label: "Country of origin" },
     ]
   },
-  {
-    title: "SEO",
-    columns: [
-      { key: "meta_title", label: "Page title (SEO)" },
-      { key: "meta_description", label: "Meta description (SEO)" },
-      { key: "handle", label: "URL handle (SEO)" },
-    ]
-  },
-  {
-    title: "Metafields",
-    columns: [
-      { key: "metafield_category", label: "Category" },
-      { key: "metafield_z8", label: "Z8 Offers" },
-    ]
-  }
 ];
 
 function ColumnsPopover({ activeColumns, onChange }) {
@@ -1824,7 +1830,6 @@ function ColumnsPopover({ activeColumns, onChange }) {
           ))}
           {filteredGroups.length > 0 && filteredGroups.some(g => g.title === 'Metafields') && (
             <div style={{ marginTop: '8px', marginBottom: '16px' }}>
-              <Button plain>Show all metafields</Button>
             </div>
           )}
         </div>
@@ -2265,14 +2270,29 @@ function BulkEditPopover({ disabled, count, onSelect }) {
   );
 }
 
-function PriceButton({ disabled, count, onApply, loading }) {
+function PriceButton({ disabled, selectedProducts, onApply, loading }) {
   const [open, setOpen] = useState(false);
-  const [type, setType] = useState("percentage");
-  const [value, setValue] = useState("10");
-  const [round, setRound] = useState("2");
+  const [adjustments, setAdjustments] = useState({});
+
+  useEffect(() => {
+    if (open && selectedProducts) {
+      const initial = {};
+      selectedProducts.forEach(p => {
+        initial[p.id] = { type: "percentage", value: "10", round: "2" };
+      });
+      setAdjustments(initial);
+    }
+  }, [open, selectedProducts]);
+
+  const updateAdj = (id, field, val) => {
+    setAdjustments(prev => ({
+      ...prev,
+      [id]: { ...prev[id], [field]: val }
+    }));
+  };
 
   const handleApply = () => {
-    onApply(type, value, round);
+    onApply(adjustments);
     setOpen(false);
   };
 
@@ -2283,22 +2303,48 @@ function PriceButton({ disabled, count, onApply, loading }) {
         content: "Apply", onAction: handleApply, loading: loading,
       }} secondaryActions={[{ content: "Cancel", onAction: () => setOpen(false) }]}>
         <Modal.Section>
-          <Select label="Adjustment type" value={type} onChange={setType} options={[
-            { label: "Percentage", value: "percentage" },
-            { label: "Fixed amount", value: "fixed" },
-          ]} />
-          <div style={{ marginTop: 12 }}>
-            <TextField label="Value" type="number" value={value} onChange={setValue} suffix={type === "percentage" ? "%" : "USD"} autoComplete="off" />
-          </div>
-          <div style={{ marginTop: 12 }}>
-            <Select label="Round to" value={round} onChange={setRound} options={[
-              { label: "No rounding", value: "0" },
-              { label: "2 decimals", value: "2" },
-              { label: "Nearest .99", value: "99" },
-            ]} />
-          </div>
-          <div style={{ marginTop: 12 }}>
-            <Text as="span" color="subdued">Preview: {count} product(s) selected</Text>
+          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+            {selectedProducts && selectedProducts.map(p => {
+              const adj = adjustments[p.id] || { type: "percentage", value: "10", round: "2" };
+              
+              let currentPrice = parseFloat(p.price);
+              if (isNaN(currentPrice)) currentPrice = 0;
+              
+              let newPrice = currentPrice;
+              const val = parseFloat(adj.value || 0);
+              if (adj.type === "percentage") {
+                newPrice = currentPrice * (1 + val / 100);
+              } else {
+                newPrice = currentPrice + val;
+              }
+              
+              if (adj.round === "2") newPrice = Math.round(newPrice * 100) / 100;
+              else if (adj.round === "99") newPrice = Math.floor(newPrice) + 0.99;
+              else if (adj.round === "0") newPrice = Math.round(newPrice);
+              
+              return (
+                <div key={p.id} style={{ border: "1px solid #dfe3e8", borderRadius: "8px", padding: "16px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "16px" }}>
+                    <Text as="h3" variant="headingMd" fontWeight="bold">{p.title}</Text>
+                    <Text as="span" color="subdued">
+                      Current: ${currentPrice.toFixed(2)} → <span style={{ color: "#008060", fontWeight: "bold" }}>${newPrice.toFixed(2)}</span>
+                    </Text>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px" }}>
+                    <Select label="Adjustment type" value={adj.type} onChange={(v) => updateAdj(p.id, 'type', v)} options={[
+                      { label: "Percentage", value: "percentage" },
+                      { label: "Fixed amount", value: "fixed" },
+                    ]} />
+                    <TextField label="Value" type="number" value={adj.value} onChange={(v) => updateAdj(p.id, 'value', v)} suffix={adj.type === "percentage" ? "%" : "USD"} autoComplete="off" />
+                    <Select label="Round to" value={adj.round} onChange={(v) => updateAdj(p.id, 'round', v)} options={[
+                      { label: "No rounding", value: "0" },
+                      { label: "2 decimals", value: "2" },
+                      { label: "Nearest .99", value: "99" },
+                    ]} />
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </Modal.Section>
       </Modal>
@@ -2317,6 +2363,9 @@ function ConfirmPushModal({ open, loading, onCancel, onConfirm }) {
     >
       <Modal.Section>
         <Text as="p">This will push your local changes (Products, Variants, Inventory, Images, ALT text, SEO, Tags, and Collections) back to Shopify.</Text>
+        <div style={{ marginTop: '12px' }}>
+          <Text as="p" color="subdued">It may take a few minutes depending on the size of your catalog.</Text>
+        </div>
       </Modal.Section>
     </Modal>
   );
@@ -2333,6 +2382,9 @@ function ConfirmSyncModal({ open, loading, onCancel, onConfirm }) {
     >
       <Modal.Section>
         <Text as="p">This will pull Products, Variants, Inventory, Collections, Images, and Metafields from Shopify to the app's local database.</Text>
+        <div style={{ marginTop: '12px' }}>
+          <Text as="p" color="subdued">It may take a few minutes depending on the size of your catalog.</Text>
+        </div>
       </Modal.Section>
     </Modal>
   );
