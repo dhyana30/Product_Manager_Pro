@@ -626,25 +626,27 @@ GRAPHQL;
 
     Route::post('/sync/pull', function (Request $request) {
         $session = $request->get('shopifySession');
-        $client = new Graphql($session->getShop(), $session->getAccessToken());
+        $client = new \Shopify\Clients\Graphql($session->getShop(), $session->getAccessToken());
         $shopDomain = $session->getShop();
-        $cursor = null;
+        $cursor = $request->input('cursor');
         $synced = 0;
-        $seenProductGids = [];
-        $jobId = DB::table('bulk_jobs')->insertGetId([
-            'shop_domain' => $shopDomain,
-            'job_name' => 'Catalog Sync (Pull)',
-            'job_type' => 'Catalog Sync',
-            'status' => 'Running',
-            'started_at' => now(),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
-
-        do {
-            try {
-                $response = $client->query([
-                    'query' => <<<'GRAPHQL'
+        
+        $jobId = $request->input('jobId');
+        if (!$jobId && !$cursor) {
+            $jobId = DB::table('bulk_jobs')->insertGetId([
+                'shop_domain' => $shopDomain,
+                'job_name' => 'Catalog Sync (Pull)',
+                'job_type' => 'Catalog Sync',
+                'status' => 'Running',
+                'started_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+        
+        try {
+            $response = $client->query([
+                'query' => <<<'GRAPHQL'
 query ProductSync($cursor: String) {
   products(first: 10, after: $cursor) {
     pageInfo { hasNextPage endCursor }
@@ -675,81 +677,88 @@ query ProductSync($cursor: String) {
   }
 }
 GRAPHQL,
-                    'variables' => ['cursor' => $cursor],
-                ]);
-            } catch (\Throwable $exception) {
-                report($exception);
-
-                return response()->json([
-                    'message' => 'Shopify could not be reached. Check the store connection and try again.',
-                ], 400);
+                'variables' => ['cursor' => $cursor],
+            ]);
+        } catch (\Throwable $exception) {
+            report($exception);
+            if ($jobId) {
+                DB::table('bulk_jobs')->where('id', $jobId)->update(['status' => 'Failed', 'error_message' => $exception->getMessage(), 'completed_at' => now()]);
             }
-            $body = HttpResponse::fromResponse($response)->getDecodedBody();
+            return response()->json([
+                'message' => 'Shopify could not be reached. Check the store connection and try again.',
+            ], 400);
+        }
+        $body = \Shopify\Clients\HttpResponse::fromResponse($response)->getDecodedBody();
 
-            if ($response->getStatusCode() !== 200 || isset($body['errors'])) {
-                DB::table('bulk_jobs')->where('id', $jobId ?? 0)->update(['status' => 'Failed', 'error_message' => json_encode($body['errors'] ?? []), 'completed_at' => now()]);
-                return response()->json(['message' => 'Shopify catalog sync failed: ' . json_encode($body['errors'] ?? []), 'errors' => $body['errors'] ?? []], 400);
+        if ($response->getStatusCode() !== 200 || isset($body['errors'])) {
+            if ($jobId) {
+                DB::table('bulk_jobs')->where('id', $jobId)->update(['status' => 'Failed', 'error_message' => json_encode($body['errors'] ?? []), 'completed_at' => now()]);
             }
+            return response()->json(['message' => 'Shopify catalog sync failed: ' . json_encode($body['errors'] ?? []), 'errors' => $body['errors'] ?? []], 400);
+        }
 
-            $connection = $body['data']['products'];
-            foreach ($connection['nodes'] as $product) {
-                $seenProductGids[] = $product['id'];
-                DB::table('products_cache')->updateOrInsert(
-                    ['shop_domain' => $shopDomain, 'product_gid' => $product['id']],
+        $connection = $body['data']['products'];
+        foreach ($connection['nodes'] as $product) {
+            DB::table('products_cache')->updateOrInsert(
+                ['shop_domain' => $shopDomain, 'product_gid' => $product['id']],
+                [
+                    'title' => $product['title'],
+                    'handle' => $product['handle'],
+                    'vendor' => $product['vendor'],
+                    'status' => strtolower($product['status']),
+                    'tags' => json_encode($product['tags']),
+                    'image_url' => $product['featuredImage']['url'] ?? null,
+                    'meta_title' => $product['seo']['title'] ?? null,
+                    'meta_description' => $product['seo']['description'] ?? null,
+                    'images_data' => json_encode($product['images']['nodes'] ?? []),
+                    'metafields' => json_encode($product['metafields']['nodes'] ?? []),
+                    'collections' => json_encode($product['collections']['nodes'] ?? []),
+                    'updated_at' => now(),
+                    'created_at' => now(),
+                ]
+            );
+            $cacheId = DB::table('products_cache')->where('shop_domain', $shopDomain)->where('product_gid', $product['id'])->value('id');
+
+            foreach ($product['variants']['nodes'] as $variant) {
+                DB::table('variants_cache')->updateOrInsert(
+                    ['variant_gid' => $variant['id']],
                     [
-                        'title' => $product['title'],
-                        'handle' => $product['handle'],
-                        'vendor' => $product['vendor'],
-                        'status' => strtolower($product['status']),
-                        'tags' => json_encode($product['tags']),
-                        'image_url' => $product['featuredImage']['url'] ?? null,
-                        'meta_title' => $product['seo']['title'] ?? null,
-                        'meta_description' => $product['seo']['description'] ?? null,
-                        'images_data' => json_encode($product['images']['nodes'] ?? []),
-                        'metafields' => json_encode($product['metafields']['nodes'] ?? []),
-                        'collections' => json_encode($product['collections']['nodes'] ?? []),
+                        'product_cache_id' => $cacheId,
+                        'inventory_item_gid' => $variant['inventoryItem']['id'] ?? null,
+                        'title' => $variant['title'] ?? null,
+                        'sku' => $variant['sku'] ?? null,
+                        'price' => $variant['price'] ?? null,
                         'updated_at' => now(),
                         'created_at' => now(),
                     ]
                 );
-                $cacheId = DB::table('products_cache')->where('shop_domain', $shopDomain)->where('product_gid', $product['id'])->value('id');
+                $variantId = DB::table('variants_cache')->where('variant_gid', $variant['id'])->value('id');
 
-                foreach ($product['variants']['nodes'] as $variant) {
-                    DB::table('variants_cache')->updateOrInsert(
-                        ['variant_gid' => $variant['id']],
+                foreach ($variant['inventoryItem']['inventoryLevels']['nodes'] ?? [] as $level) {
+                    $available = collect($level['quantities'] ?? [])->firstWhere('name', 'available')['quantity'] ?? 0;
+                    DB::table('inventory_cache')->updateOrInsert(
+                        ['product_cache_id' => $cacheId, 'variant_cache_id' => $variantId, 'location_gid' => $level['location']['id']],
                         [
-                            'product_cache_id' => $cacheId,
-                            'inventory_item_gid' => $variant['inventoryItem']['id'] ?? null,
-                            'title' => $variant['title'] ?? null,
-                            'sku' => $variant['sku'] ?? null,
-                            'price' => $variant['price'] ?? null,
+                            'location_name' => $level['location']['name'] ?? null,
+                            'available' => (int) $available,
                             'updated_at' => now(),
                             'created_at' => now(),
                         ]
                     );
-                    $variantId = DB::table('variants_cache')->where('variant_gid', $variant['id'])->value('id');
-
-                    foreach ($variant['inventoryItem']['inventoryLevels']['nodes'] ?? [] as $level) {
-                        $available = collect($level['quantities'] ?? [])->firstWhere('name', 'available')['quantity'] ?? 0;
-                        DB::table('inventory_cache')->updateOrInsert(
-                            ['product_cache_id' => $cacheId, 'variant_cache_id' => $variantId, 'location_gid' => $level['location']['id']],
-                            [
-                                'location_name' => $level['location']['name'] ?? null,
-                                'available' => (int) $available,
-                                'updated_at' => now(),
-                                'created_at' => now(),
-                            ]
-                        );
-                    }
                 }
-                $synced++;
             }
+            $synced++;
+        }
 
-            $cursor = $connection['pageInfo']['hasNextPage'] ? $connection['pageInfo']['endCursor'] : null;
-        } while ($cursor !== null);
+        $nextCursor = $connection['pageInfo']['hasNextPage'] ? $connection['pageInfo']['endCursor'] : null;
 
-        DB::table('bulk_jobs')->where('id', $jobId ?? 0)->update(['status' => 'Completed', 'records_affected' => $synced, 'progress' => 100, 'completed_at' => now()]);
-        return response()->json(['message' => 'Catalog sync completed', 'synced' => $synced, 'completed_at' => now()->toIso8601String()]);
+        if ($nextCursor === null && $jobId) {
+            DB::table('bulk_jobs')->where('id', $jobId)->update(['status' => 'Completed', 'records_affected' => DB::raw("records_affected + $synced"), 'progress' => 100, 'completed_at' => now()]);
+        } else if ($jobId) {
+            DB::table('bulk_jobs')->where('id', $jobId)->update(['records_affected' => DB::raw("records_affected + $synced")]);
+        }
+
+        return response()->json(['message' => 'Catalog chunk synced', 'synced' => $synced, 'next_cursor' => $nextCursor, 'jobId' => $jobId, 'completed_at' => now()->toIso8601String()]);
     });
 
     Route::get('/files', function (Request $request) {

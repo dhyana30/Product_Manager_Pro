@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button, Card, Layout, Page, Stack, Text, Toast } from "@shopify/polaris";
 import { TitleBar, useAuthenticatedFetch } from "@shopify/app-bridge-react";
+import { useGlobalNotification } from "../components";
 import { useNavigate } from "react-router-dom";
 import { useStoreTimezone } from "../utils/storeTimezone";
 import { formatDateTime } from "../utils/timezone";
@@ -45,7 +46,7 @@ export default function Export() {
   };
 
   return (
-    <Page title="Export" backAction={{ content: "Dashboard", onAction: () => navigate("/") }}>
+    <Page title="Export" backAction={{ content: "Dashboard", onAction: () => navigate("/") }} secondaryActions={[{ content: unreadCount > 0 ? `🔔 ${unreadCount}` : "🔔", onAction: () => navigate("/notifications") }]}>
       {toastMsg && <Toast content={toastMsg} onDismiss={() => setToastMsg("")} />}
       <Layout>
         <Layout.Section>

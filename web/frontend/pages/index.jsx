@@ -11,6 +11,7 @@ import {
   Tooltip,
 } from "@shopify/polaris";
 import { TitleBar, Toast } from "@shopify/app-bridge-react";
+import { useGlobalNotification } from "../components";
 import { useNavigate } from "react-router-dom";
 import { useStoreTimezone, formatInStoreTimezone } from "../utils/storeTimezone";
 import { formatDateTime } from "../utils/timezone";
@@ -92,6 +93,7 @@ const RESPONSIVE_CSS = `
 // ---------------------------------------------------------------------------
 
 export default function HomePage() {
+  const { unreadCount } = useGlobalNotification();
   const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -100,22 +102,44 @@ export default function HomePage() {
   const timeZone = useStoreTimezone();
   const authenticatedFetch = useAuthenticatedFetch();
 
-  const handleSyncNow = async () => {
+  const handleSyncNow = () => {
     setIsSyncing(true);
     setSyncError("");
-    try {
-      const response = await authenticatedFetch("/api/sync/pull", { method: "POST" });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.message || "Catalog sync failed.");
+    setSyncMessage("Syncing from Shopify...");
+    
+    // Stop spinner immediately to match Image Manager behavior
+    setIsSyncing(false);
 
-      const dashboardResponse = await authenticatedFetch("/api/dashboard");
-      if (dashboardResponse.ok) setData(await dashboardResponse.json());
-      setSyncMessage(payload.message || "Catalog synced successfully.");
-    } catch (syncFailure) {
-      setSyncError(syncFailure.message);
-    } finally {
-      setIsSyncing(false);
-    }
+    (async () => {
+      try {
+        let cursor = null;
+        let more = true;
+        let totalSynced = 0;
+        let jobId = null;
+        
+        while (more) {
+          const response = await authenticatedFetch("/api/sync/pull", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ cursor, jobId })
+          });
+          
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.message || "Catalog sync failed.");
+          
+          totalSynced += (payload.synced || 0);
+          cursor = payload.next_cursor;
+          if (payload.jobId) jobId = payload.jobId;
+          more = cursor !== null;
+        }
+
+        const dashboardResponse = await authenticatedFetch("/api/dashboard");
+        if (dashboardResponse.ok) setData(await dashboardResponse.json());
+        setSyncMessage(`Catalog synced successfully (${totalSynced} products).`);
+      } catch (syncFailure) {
+        setSyncError(syncFailure.message);
+      }
+    })();
   };
 
   useEffect(() => {
@@ -148,7 +172,7 @@ export default function HomePage() {
         title="Dashboard"
         primaryAction={{ content: "Sync now", onAction: handleSyncNow, loading: isSyncing }}
         secondaryActions={[
-          { content: "🔔", onAction: () => navigate("/notifications") },
+          { content: unreadCount > 0 ? `🔔 ${unreadCount}` : "🔔", onAction: () => navigate("/notifications") },
           { content: "Open Product Grid", onAction: () => navigate("/catalog") },
         ]}
       />

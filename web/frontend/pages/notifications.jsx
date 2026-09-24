@@ -13,29 +13,72 @@ import {
   CircleTickMajor,
 } from '@shopify/polaris-icons';
 import { TitleBar, useAuthenticatedFetch } from '@shopify/app-bridge-react';
+import { useStoreTimezone } from '../utils/storeTimezone';
 
 export default function Notifications() {
   const navigate = useNavigate();
   const fetch = useAuthenticatedFetch();
   const [selectedTab, setSelectedTab] = useState(0);
   const [readIds, setReadIds] = useState([]);
+  const [groupedNotifications, setGroupedNotifications] = useState([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  const timeZone = useStoreTimezone();
 
   useEffect(() => {
-    async function loadRead() {
+    async function loadData() {
       try {
-        const res = await fetch('/api/notifications/read');
-        if (res.ok) {
-          const data = await res.json();
+        const resRead = await fetch('/api/notifications/read');
+        if (resRead.ok) {
+          const data = await resRead.json();
           setReadIds(data || []);
+        }
+
+        const resNotif = await fetch('/api/notifications');
+        if (resNotif.ok) {
+          const notifData = await resNotif.json();
+          const items = notifData.data || [];
+          
+          const groups = {};
+          items.forEach(item => {
+            let safeDate = item.created_at;
+            if (typeof safeDate === 'string' && !safeDate.includes('Z')) {
+              safeDate = safeDate.replace(' ', 'T') + 'Z';
+            }
+            const date = new Date(safeDate);
+            const now = new Date();
+            const yesterday = new Date(now.getTime() - 86400000);
+            
+            let storeDateStr = date.toLocaleDateString('en-US', { timeZone, month: 'short', day: 'numeric', year: 'numeric' });
+            const storeTodayStr = now.toLocaleDateString('en-US', { timeZone, month: 'short', day: 'numeric', year: 'numeric' });
+            const storeYesterdayStr = yesterday.toLocaleDateString('en-US', { timeZone, month: 'short', day: 'numeric', year: 'numeric' });
+            
+            let dateLabel = storeDateStr;
+            if (storeDateStr === storeTodayStr) {
+              dateLabel = 'Today — ' + storeDateStr;
+            } else if (storeDateStr === storeYesterdayStr) {
+              dateLabel = 'Yesterday — ' + storeDateStr;
+            }
+
+            if (!groups[dateLabel]) groups[dateLabel] = { dateLabel, items: [] };
+            groups[dateLabel].items.push({
+              id: item.id,
+              severity: item.severity || 'info',
+              title: item.title,
+              category: item.category,
+              message: item.message,
+              time: date.toLocaleTimeString('en-US', { timeZone, hour: 'numeric', minute: '2-digit' }),
+              actionText: item.action_text || 'View details',
+            });
+          });
+          setGroupedNotifications(Object.values(groups));
         }
       } catch (e) {
         console.error(e);
       }
       setIsLoaded(true);
     }
-    loadRead();
-  }, [fetch]);
+    loadData();
+  }, [fetch, timeZone]);
 
   const saveReadIds = async (ids) => {
     setReadIds(ids);
@@ -50,35 +93,7 @@ export default function Notifications() {
     }
   };
 
-  const groupedNotifications = [
-    {
-      dateLabel: 'Today — May 15, 2025',
-      items: [
-        { id: 1, severity: 'error', title: 'Inventory sync failed', category: 'Inventory', message: 'Failed to sync 23 SKUs from "Warehouse 7". See errors for details.', time: '9:41 AM', actionText: 'View errors' },
-        { id: 2, severity: 'warning', title: 'Low stock alert', category: 'Inventory', message: '8 SKUs are below your low stock threshold.', time: '9:18 AM', actionText: 'View items' },
-        { id: 3, severity: 'info', title: 'Catalog import completed', category: 'Catalog', message: '"Spring Collection 2025.csv" imported successfully. 312 products updated.', time: '8:02 AM', actionText: 'View results' },
-        { id: 4, severity: 'success', title: 'Image optimization completed', category: 'Images', message: 'Optimized 1,248 images.', time: '7:45 AM', actionText: 'View report' },
-        { id: 5, severity: 'info', title: 'SEO scan completed', category: 'SEO', message: 'No critical issues found. 12 improvements available.', time: '7:12 AM', actionText: 'View report' }
-      ]
-    },
-    {
-      dateLabel: 'Yesterday — May 14, 2025',
-      items: [
-        { id: 6, severity: 'error', title: 'Image upload failed', category: 'Images', message: '12 images failed to upload.', time: '4:32 PM', actionText: 'View errors' },
-        { id: 7, severity: 'warning', title: 'Duplicate SKUs detected', category: 'Catalog', message: '5 duplicate SKUs found.', time: '2:11 PM', actionText: 'Review' },
-        { id: 8, severity: 'success', title: 'Inventory sync completed', category: 'Inventory', message: 'Warehouse "Main" synced successfully.', time: '11:47 AM', actionText: 'View details' },
-        { id: 9, severity: 'info', title: 'System maintenance scheduled', category: 'System', message: 'Scheduled for May 17, 2025 2:00 AM — 4:00 AM UTC.', time: '9:00 AM', actionText: 'Learn more' }
-      ]
-    },
-    {
-      dateLabel: 'May 13, 2025',
-      items: [
-        { id: 10, severity: 'info', title: 'SEO meta update completed', category: 'SEO', message: 'Updated meta for 842 products.', time: '6:23 PM', actionText: 'View report' },
-        { id: 11, severity: 'success', title: 'Catalog export completed', category: 'Catalog', message: '"Active Products Export.csv" is ready.', time: '3:14 PM', actionText: 'Download' },
-        { id: 12, severity: 'warning', title: 'Missing attributes detected', category: 'Catalog', message: '14 products are missing required attributes.', time: '10:05 AM', actionText: 'View items' }
-      ]
-    }
-  ];
+  // groupedNotifications loaded from API
 
   const markAsRead = (id) => {
     if (!readIds.includes(id)) {
@@ -92,7 +107,7 @@ export default function Notifications() {
   };
 
   const allNotificationCount = groupedNotifications.reduce((acc, group) => acc + group.items.length, 0);
-  const unreadCount = allNotificationCount - readIds.length;
+  const unreadCount = groupedNotifications.flatMap(group => group.items).filter(item => !readIds.includes(item.id)).length;
 
   const [sessionUnreadIds, setSessionUnreadIds] = useState([]);
   useEffect(() => {
@@ -235,25 +250,18 @@ export default function Notifications() {
                       {/* Actions/Time */}
                       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "12px" }}>
                         <span style={{ color: "#8a8f96", fontSize: "13px" }}>{item.time}</span>
-                        <button style={{ 
-                          background: "#ffffff", 
-                          border: "1px solid #c9cccf", 
-                          borderRadius: "4px", 
-                          padding: "6px 12px", 
-                          fontSize: "13px", 
-                          fontWeight: "600",
-                          color: "#202223",
-                          cursor: "pointer",
-                          boxShadow: "0 1px 2px rgba(0,0,0,0.05)"
-                        }}>
-                          {item.actionText}
-                        </button>
+                        
                       </div>
                     </div>
                   );
                 })}
               </div>
             ))}
+            {displayedGroups.length === 0 && (
+              <div style={{ padding: "40px", textAlign: "center" }}>
+                <Text color="subdued">No notifications to display.</Text>
+              </div>
+            )}
           </div>
 
         </div>

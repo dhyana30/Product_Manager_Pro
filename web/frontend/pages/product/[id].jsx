@@ -1062,6 +1062,7 @@ function ProductEdit() {
   const [description, setDescription] = useState('');
   const descriptionRef = useRef(description);
   const [storeMediaModalOpen, setStoreMediaModalOpen] = useState(false);
+  const [storeMediaPopoverOpen, setStoreMediaPopoverOpen] = useState(false);
   const [mediaOrder, setMediaOrder] = useState([]);
   
   // Pricing states
@@ -1313,12 +1314,51 @@ function ProductEdit() {
                     <img src={imageUrl} alt="Product Media" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'cover' }} />
                   </div>
                 )}
-                <div 
-                  style={{ width: '120px', height: '120px', border: '1px dashed #c9cccf', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', backgroundColor: '#fafbfb' }}
-                  onClick={() => setStoreMediaModalOpen(true)}
+                <Popover
+                  active={storeMediaPopoverOpen}
+                  activator={
+                    <div 
+                      style={{ width: '120px', height: '120px', border: '1px dashed #c9cccf', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', backgroundColor: '#fafbfb' }}
+                      onClick={() => setStoreMediaPopoverOpen(!storeMediaPopoverOpen)}
+                    >
+                      <Icon source={CirclePlusMinor} color="subdued" />
+                    </div>
+                  }
+                  onClose={() => setStoreMediaPopoverOpen(false)}
                 >
-                  <Icon source={CirclePlusMinor} color="subdued" />
-                </div>
+                  <ActionList
+                    actionRole="menuitem"
+                    items={[
+                      {
+                        content: 'Upload from device',
+                        onAction: () => {
+                          setStoreMediaPopoverOpen(false);
+                          const input = document.createElement('input');
+                          input.type = 'file';
+                          input.accept = 'image/*';
+                          input.onchange = (e) => {
+                             const file = e.target.files[0];
+                             if (file) {
+                               const reader = new FileReader();
+                               reader.onload = (ev) => {
+                                 setImageUrl(ev.target.result);
+                               };
+                               reader.readAsDataURL(file);
+                             }
+                          };
+                          input.click();
+                        }
+                      },
+                      {
+                        content: 'Select existing',
+                        onAction: () => {
+                          setStoreMediaPopoverOpen(false);
+                          setStoreMediaModalOpen(true);
+                        }
+                      }
+                    ]}
+                  />
+                </Popover>
               </div>
             </Card>
 

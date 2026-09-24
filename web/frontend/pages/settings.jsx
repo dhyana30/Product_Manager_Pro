@@ -16,6 +16,7 @@ import {
   TextField
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
+import { useGlobalNotification } from "../components";
 import {
   SettingsMinor,
   StoreMinor,
@@ -107,6 +108,7 @@ const RESPONSIVE_CSS = `
 `;
 
 export default function Settings() {
+  const { unreadCount } = useGlobalNotification();
   const navigate = useNavigate();
   const fetch = useAuthenticatedFetch();
   const [selectedMenu, setSelectedMenu] = useState("general");
@@ -340,7 +342,10 @@ export default function Settings() {
 
   return (
     <Page>
-      <TitleBar title="Settings" />
+      <TitleBar 
+        title="Settings" 
+        secondaryActions={[{ content: unreadCount > 0 ? `🔔 ${unreadCount}` : "🔔", onAction: () => navigate("/notifications") }]} 
+      />
       <style>{RESPONSIVE_CSS}</style>
       
       <div style={{ marginBottom: 16 }}>

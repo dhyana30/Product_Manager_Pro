@@ -23,6 +23,7 @@ import {
 } from '@shopify/polaris';
 import { ViewMinor, SearchMinor, FilterMinor, SortMinor, DeleteMinor, EditMinor, ArrowLeftMinor, ImageMajor } from '@shopify/polaris-icons';
 import { TitleBar } from '@shopify/app-bridge-react';
+import { useGlobalNotification } from "../components";
 import { PaginationBar, FileSelectorModal } from "../components";
 import { useAuthenticatedFetch } from "../hooks/useAuthenticatedFetch";
 
@@ -36,6 +37,8 @@ const SORT_OPTIONS = [
 ];
 
 function ImageManagerContent() {
+  const { showToast, unreadCount } = useGlobalNotification();
+  const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [products, setProducts] = useState([]);
   const [sortValue, setSortValue] = useState("title-asc");
@@ -82,7 +85,8 @@ function ImageManagerContent() {
   };
 
   React.useEffect(() => {
-    loadProducts();
+    const handler = setTimeout(() => { loadProducts(); }, 400);
+    return () => clearTimeout(handler);
   }, [query]);
 
   const [statusFilter, setStatusFilter] = useState("");
@@ -181,17 +185,52 @@ function ImageManagerContent() {
   const [isSyncing, setIsSyncing] = useState(false);
 
   const handleSync = async () => {
-    setIsSyncing(true);
-    try {
-      const response = await authenticatedFetch('/api/sync/push', { method: 'POST' });
-      if (!response.ok) throw new Error('Sync failed');
-      app.dispatch(Toast.Action.SHOW, { message: 'Sync completed successfully' });
-      loadProducts();
-    } catch (err) {
-      app.dispatch(Toast.Action.SHOW, { message: err.message, isError: true });
-    } finally {
-      setIsSyncing(false);
-    }
+    // Show notification immediately
+    showToast('Image sync started');
+    
+    // Background the actual sync logic
+    (async () => {
+      try {
+        await authenticatedFetch('/api/notifications', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ category: 'Images', title: 'Image sync started', message: 'Image sync started' })
+        });
+  
+        let offset = 0;
+        let totalPushed = 0;
+        let more = true;
+        while (more) {
+          const response = await authenticatedFetch('/api/sync/push', {
+            method: 'POST',
+            body: JSON.stringify({ offset, sync_files: true }),
+            headers: { 'Content-Type': 'application/json' }
+          });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.message || 'Sync failed');
+          
+          offset += payload.pushed_this_batch;
+          totalPushed += payload.pushed_this_batch;
+          more = payload.more_remaining;
+        }
+        
+        await authenticatedFetch('/api/notifications', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ category: 'Images', title: 'Image sync completed', message: `Image sync completed: ${totalPushed} images synced` })
+        });
+        showToast(`Image sync completed: ${totalPushed} images synced`);
+  
+        loadProducts();
+      } catch (err) {
+        await authenticatedFetch('/api/notifications', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ category: 'Images', title: 'Image sync failed', message: 'Image sync failed' })
+        });
+        showToast('Image sync failed', true);
+      }
+    })();
   };
   const [popupUploadFile, setPopupUploadFile] = useState(null);
   const [isSavingPopupImage, setIsSavingPopupImage] = useState(false);
@@ -461,14 +500,7 @@ function ImageManagerContent() {
           <IndexTable.Cell>
             <Text variant="bodyMd" fontWeight="bold">{imageCount}</Text>
           </IndexTable.Cell>
-          <IndexTable.Cell>
-            <div style={{ textAlign: 'center' }}>
-              <Text variant="bodyMd">{altCompleteCount} / {imageCount}</Text>
-              <Text variant="bodySm" color="subdued">
-                <span style={{ color: altCompleteColor }}>{altCompletePercent}</span>
-              </Text>
-            </div>
-          </IndexTable.Cell>
+          
           <IndexTable.Cell>
             <div style={{ textAlign: 'center' }}>
               <Text variant="bodyMd" color={duplicates !== '-' ? 'critical' : 'subdued'}>{duplicates}</Text>
@@ -618,7 +650,10 @@ function ImageManagerContent() {
 
   return (
     <Page fullWidth>
-      <TitleBar title="Image Manager" />
+      <TitleBar 
+        title="Image Manager" 
+        secondaryActions={[{ content: unreadCount > 0 ? `🔔 ${unreadCount}` : "🔔", onAction: () => navigate("/notifications") }]} 
+      />
       <Stack distribution="equalSpacing" alignment="center">
         <div>
           
@@ -626,7 +661,7 @@ function ImageManagerContent() {
         </div>
         <ButtonGroup>
           <Button onClick={handleSync} loading={isSyncing}>Sync</Button>
-          <Button primary onClick={() => setIsUploadPageOpen(true)}>Upload</Button>
+          <Button primary onClick={() => setIsUploadPageOpen(true)} disabled={isSyncing}>Upload</Button>
         </ButtonGroup>
       </Stack>
 
@@ -711,11 +746,10 @@ function ImageManagerContent() {
             headings={[
               { title: 'Product' },
               { title: 'Image Count' },
-              { title: 'ALT Complete', alignment: 'center' },
               { title: 'Duplicates', alignment: 'center' },
               { title: 'Status' },
               { title: 'Last Updated' },
-              { title: '' },
+              { title: 'Action' },
             ]}
           >
             {rowMarkup}

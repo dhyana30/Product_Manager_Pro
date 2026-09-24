@@ -7,6 +7,7 @@ import {
   AppBridgeProvider,
   QueryProvider,
   PolarisProvider,
+  NotificationProvider,
 } from "./components";
 
 export default function App() {
@@ -20,6 +21,7 @@ export default function App() {
         <AppBridgeProvider>
           <StoreTimezoneProvider>
             <QueryProvider>
+              <NotificationProvider>
             <NavigationMenu
               navigationLinks={[
                 {
@@ -45,6 +47,7 @@ export default function App() {
               ]}
             />
             <Routes pages={pages} />
+            </NotificationProvider>
             </QueryProvider>
           </StoreTimezoneProvider>
         </AppBridgeProvider>

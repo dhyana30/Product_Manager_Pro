@@ -40,6 +40,7 @@ import {
   ViewMinor, ChevronUpMinor, ChevronDownMinor,
 } from "@shopify/polaris-icons";
 import { TitleBar, Toast } from "@shopify/app-bridge-react";
+import { useGlobalNotification } from "../components";
 import { useAuthenticatedFetch } from "../hooks/useAuthenticatedFetch";
 
 // ---------------------------------------------------------------------------
@@ -86,6 +87,7 @@ const SORT_OPTIONS = [
 ];
 
 export default function Catalog() {
+  const { unreadCount, showToast } = useGlobalNotification();
   const navigate = useNavigate();
   
   const [query, setQuery] = useState("");
@@ -118,55 +120,112 @@ export default function Catalog() {
     }
   };
 
-  useEffect(() => { loadProducts(); }, [query]);
+  useEffect(() => {
+    const handler = setTimeout(() => { loadProducts(); }, 400);
+    return () => clearTimeout(handler);
+  }, [query]);
 
-  const syncCatalog = async () => {
+  const syncCatalog = () => {
     setIsSyncing(true);
-    setError("");
-    setSyncMessage("Syncing from Shopify... It may take a few minutes.");
-    try {
-      const response = await authenticatedFetch("/api/sync/pull", { method: "POST" });
-      const payload = await readApiResponse(response);
-      if (!response.ok) throw new Error(payload.message || "Catalog sync failed.");
-      await loadProducts();
-      setSyncMessage("Sync successful from Shopify");
-    } catch (syncError) {
-      setError(syncError.message);
-    } finally {
-      setIsSyncing(false);
-    }
+    showToast("Syncing from Shopify...");
+    authenticatedFetch('/api/notifications', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category: 'Catalog', title: 'Catalog sync started', message: 'Catalog sync started' })
+    });
+    
+    // Stop spinner immediately to match Image Manager behavior
+    setIsSyncing(false);
+
+    (async () => {
+      try {
+        let cursor = null;
+        let more = true;
+        let totalSynced = 0;
+        let jobId = null;
+        
+        while (more) {
+          const response = await authenticatedFetch("/api/sync/pull", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ cursor, jobId })
+          });
+          
+          const payload = await readApiResponse(response);
+          if (!response.ok) throw new Error(payload.message || "Catalog sync failed.");
+          
+          totalSynced += (payload.synced || 0);
+          cursor = payload.next_cursor;
+          if (payload.jobId) jobId = payload.jobId;
+          more = cursor !== null;
+        }
+        
+        loadProducts();
+        
+        await authenticatedFetch('/api/notifications', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ category: 'Catalog', title: 'Catalog sync completed', message: `Catalog sync completed: ${totalSynced} products synced` })
+        });
+        showToast("Sync successful from Shopify");
+      } catch (syncError) {
+        await authenticatedFetch('/api/notifications', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ category: 'Catalog', title: 'Catalog sync failed', message: 'Catalog sync failed' })
+        });
+        showToast(syncError.message, true);
+      }
+    })();
   };
 
-  const syncToShopify = async () => {
+  const syncToShopify = () => {
     setIsPushing(true);
-    setError("");
-    setSyncMessage("Syncing to Shopify... It may take a few minutes.");
-    try {
-      let offset = 0;
-      let more = true;
-      let totalPushed = 0;
-      while (more) {
-        const response = await authenticatedFetch("/api/sync/push", {
-          method: "POST",
-          body: JSON.stringify({ offset }),
-          headers: { "Content-Type": "application/json" }
+    showToast("Syncing to Shopify...");
+    authenticatedFetch('/api/notifications', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category: 'Catalog', title: 'Catalog push started', message: 'Catalog push started' })
+    });
+    
+    // Stop spinner immediately to match Image Manager behavior
+    setIsPushing(false);
+
+    (async () => {
+      try {
+        let offset = 0;
+        let more = true;
+        let totalPushed = 0;
+        while (more) {
+          const response = await authenticatedFetch("/api/sync/push", {
+            method: "POST",
+            body: JSON.stringify({ offset }),
+            headers: { "Content-Type": "application/json" }
+          });
+          const payload = await readApiResponse(response);
+          if (!response.ok) throw new Error(payload.message || "Push sync failed.");
+          
+          offset += payload.pushed_this_batch;
+          totalPushed += payload.pushed_this_batch;
+          more = payload.more_remaining;
+        }
+        
+        await authenticatedFetch('/api/notifications', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ category: 'Catalog', title: 'Catalog push completed', message: `Catalog push completed: ${totalPushed} products synced` })
         });
-        const payload = await readApiResponse(response);
-        if (!response.ok) throw new Error(payload.message || "Push sync failed.");
-        
-        offset += payload.pushed_this_batch;
-        totalPushed += payload.pushed_this_batch;
-        more = payload.more_remaining;
-        
-        setSyncMessage(`${totalPushed} products synced`);
+        showToast("Sync successful to Shopify");
+        loadProducts();
+      } catch (pushError) {
+        await authenticatedFetch('/api/notifications', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ category: 'Catalog', title: 'Catalog push failed', message: 'Catalog push failed' })
+        });
+        showToast(pushError.message, true);
       }
-      setSyncMessage("Sync successful to Shopify");
-      loadProducts();
-    } catch (pushError) {
-      setError(pushError.message);
-    } finally {
-      setIsPushing(false);
-    }
+    })();
   };
 
   // -- Presentation-only state below: selection, filters, sort, columns,
@@ -380,24 +439,26 @@ export default function Catalog() {
 
   return (
     <Page fullWidth>
-      <TitleBar title="Catalog & Inventory" />
-
-      {syncMessage && (
-        <Toast content={syncMessage} onDismiss={() => setSyncMessage("")} />
-      )}
+      <TitleBar 
+        title="Catalog & Inventory" 
+        secondaryActions={[{ content: unreadCount > 0 ? `🔔 ${unreadCount}` : "🔔", onAction: () => navigate("/notifications") }]} 
+      />
       {error && (
         <Toast content={error} error onDismiss={() => setError("")} />
       )}
+
+      
+      
 
       <Card>
         <div style={{ padding: '16px', borderBottom: '1px solid #dfe3e8' }}>
           <Stack alignment="center" distribution="equalSpacing">
             <Text variant="headingMd">Products</Text>
             <ButtonGroup>
-              <Button icon={ImportMinor} loading={isSyncing} onClick={() => setConfirmSyncOpen(true)}>
+              <Button icon={ImportMinor} loading={isSyncing} disabled={isPushing} onClick={() => setConfirmSyncOpen(true)}>
                 Sync from Shopify
               </Button>
-              <Button icon={ExportMinor} loading={isPushing} onClick={() => setConfirmPushOpen(true)}>
+              <Button icon={ExportMinor} loading={isPushing} disabled={isSyncing} onClick={() => setConfirmPushOpen(true)}>
                 Sync to Shopify
               </Button>
               <CreateProductButton />

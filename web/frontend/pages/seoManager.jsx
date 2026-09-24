@@ -24,6 +24,7 @@ import {
 } from '@shopify/polaris';
 import { ExternalMinor, ViewMinor, SearchMinor, FilterMinor, ArrowLeftMinor, SortMinor, ImageMajor } from '@shopify/polaris-icons';
 import { TitleBar } from '@shopify/app-bridge-react';
+import { useGlobalNotification } from "../components";
 import { PaginationBar } from "../components";
 import { useAuthenticatedFetch } from "../hooks/useAuthenticatedFetch";
 
@@ -37,6 +38,8 @@ const SORT_OPTIONS = [
 ];
 
 function SeoManagerContent() {
+  const { unreadCount } = useGlobalNotification();
+  const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [products, setProducts] = useState([]);
   const [sortValue, setSortValue] = useState("title-asc");
@@ -396,9 +399,7 @@ function SeoManagerContent() {
             )}
           </IndexTable.Cell>
 
-          <IndexTable.Cell>
-            {badgeMarkup}
-          </IndexTable.Cell>
+          
 
           <IndexTable.Cell>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center', whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
@@ -607,7 +608,10 @@ function SeoManagerContent() {
 
   return (
     <Page fullWidth title="SEO Bulk Editor" backAction={{ content: "SEO Manager", onAction: () => setIsBulkEditing(false) }}>
-      <TitleBar title="SEO Manager" />
+      <TitleBar 
+        title="SEO Manager" 
+        secondaryActions={[{ content: unreadCount > 0 ? `🔔 ${unreadCount}` : "🔔", onAction: () => navigate("/notifications") }]} 
+      />
 
 
       <div style={{ marginTop: '24px' }}>
@@ -690,7 +694,6 @@ function SeoManagerContent() {
                   { title: 'Meta Title' },
                   { title: 'Meta Description' },
                   { title: 'URL Handle' },
-                  { title: 'Issues' },
                   { title: 'Actions' },
                 ]}
               >
