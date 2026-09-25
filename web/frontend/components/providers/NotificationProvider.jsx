@@ -1,5 +1,5 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
-import { Toast } from '@shopify/app-bridge-react';
+import { Toast } from '@shopify/polaris';
 import { useAuthenticatedFetch } from '../../hooks/useAuthenticatedFetch';
 
 const NotificationContext = createContext();

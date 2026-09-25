@@ -70,12 +70,35 @@ function ImageManagerContent() {
           missingImages: hasImage ? 0 : 1,
           duplicates: '-',
           image_url: product.image_url,
+          image_hash: product.image_hash,
           image_name: product.image_name || '',
           image_alt: product.image_alt || '',
           imageManagerStatus: hasImage ? 'Good' : 'No images',
           lastUpdated: 'Recently synced'
         };
       });
+
+      const urlCounts = {};
+      mappedProducts.forEach(p => {
+        // Group by image_hash (calculated by backend) or fallback to image_url
+        let identity = p.image_hash || p.image_url;
+        if (identity) identity = identity.split('?')[0];
+        if (identity) {
+          urlCounts[identity] = (urlCounts[identity] || 0) + 1;
+        }
+      });
+
+      mappedProducts.forEach(p => {
+        let identity = p.image_hash || p.image_url;
+        if (identity) identity = identity.split('?')[0];
+        if (identity) {
+          if (urlCounts[identity] > 1) {
+            p.duplicates = urlCounts[identity]; // Show total count instead of count - 1 to exactly match requirements "If used by 2 products, show 2"
+            p.imageManagerStatus = 'Duplicates found';
+          }
+        }
+      });
+
       setProducts(mappedProducts);
     } catch (loadError) {
       setError(loadError.message);
@@ -185,6 +208,11 @@ function ImageManagerContent() {
   const [isSyncing, setIsSyncing] = useState(false);
 
   const handleSync = async () => {
+    if (selectedResources.length === 0) {
+      setError("Please select at least one product to sync.");
+      return;
+    }
+
     // Show notification immediately
     showToast('Image sync started');
     
@@ -199,14 +227,16 @@ function ImageManagerContent() {
   
         let offset = 0;
         let totalPushed = 0;
+        let jobId = null;
         let more = true;
         while (more) {
           const response = await authenticatedFetch('/api/sync/push', {
             method: 'POST',
-            body: JSON.stringify({ offset, sync_files: true }),
+            body: JSON.stringify({ offset, jobId, sync_files: true, selectedProductIds: selectedResources }),
             headers: { 'Content-Type': 'application/json' }
           });
           const payload = await response.json();
+          if (payload.jobId) jobId = payload.jobId;
           if (!response.ok) throw new Error(payload.message || 'Sync failed');
           
           offset += payload.pushed_this_batch;
@@ -446,7 +476,7 @@ function ImageManagerContent() {
 
   const rowMarkup = paginatedProducts.map(
     (product, index) => {
-      const { id, title, sku, imageCount, altCompleteCount, altCompletePercent, missingImages, duplicates, imageManagerStatus: status, lastUpdated, image_url } = product;
+      const { id, title, sku, imageCount, altCompleteCount, altCompletePercent, missingImages, duplicates, lastUpdated, image_url } = product;
       let statusBadge;
       switch (status) {
         case 'Good':
@@ -480,40 +510,43 @@ function ImageManagerContent() {
           position={index}
         >
           <IndexTable.Cell>
-            <Stack wrap={false} alignment="center" spacing="tight">
-              {image_url ? (
-                <div onClick={(e) => { e.stopPropagation(); setImagePopup({ id, image_url, title }); }} style={{ cursor: 'pointer' }}>
-                  <img src={image_url} alt={title} style={{ width: '40px', height: '40px', objectFit: 'cover', borderRadius: '4px' }} />
+            <div style={{ minWidth: '250px' }}>
+              <Stack wrap={false} alignment="center" spacing="tight">
+                {image_url ? (
+                  <div onClick={(e) => { e.stopPropagation(); setImagePopup({ id, image_url, title }); }} style={{ cursor: 'pointer' }}>
+                    <img src={image_url} alt={title} style={{ width: '40px', height: '40px', objectFit: 'cover', borderRadius: '4px' }} />
+                  </div>
+                ) : (
+                  <div style={{ width: '40px', height: '40px', background: '#f4f6f8', border: '1px solid #dfe3e8', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Icon source={ImageMajor} color="subdued" />
+                  </div>
+                )}
+                <div onClick={(e) => e.stopPropagation()}>
+                  <Text variant="bodyMd" fontWeight="bold" color="primary">{title}</Text>
+                  <Text variant="bodySm" color="subdued">SKU: {sku}</Text>
+                  <Text variant="bodySm" color="subdued">ID: {id}</Text>
                 </div>
-              ) : (
-                <div style={{ width: '40px', height: '40px', background: '#f4f6f8', border: '1px solid #dfe3e8', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Icon source={ImageMajor} color="subdued" />
-                </div>
-              )}
-              <div onClick={(e) => e.stopPropagation()}>
-                <Text variant="bodyMd" fontWeight="bold" color="primary">{title}</Text>
-                <Text variant="bodySm" color="subdued">SKU: {sku}</Text>
-                <Text variant="bodySm" color="subdued">ID: {id}</Text>
-              </div>
-            </Stack>
+              </Stack>
+            </div>
           </IndexTable.Cell>
           <IndexTable.Cell>
-            <Text variant="bodyMd" fontWeight="bold">{imageCount}</Text>
+            <div style={{ minWidth: '100px' }}>
+              <Text variant="bodyMd" fontWeight="bold">{imageCount}</Text>
+            </div>
           </IndexTable.Cell>
           
           <IndexTable.Cell>
-            <div style={{ textAlign: 'center' }}>
+            <div style={{ textAlign: 'center', minWidth: '90px' }}>
               <Text variant="bodyMd" color={duplicates !== '-' ? 'critical' : 'subdued'}>{duplicates}</Text>
             </div>
           </IndexTable.Cell>
-          <IndexTable.Cell>{statusBadge}</IndexTable.Cell>
           <IndexTable.Cell>
-            <div style={{ whiteSpace: 'pre-wrap' }}>
+            <div style={{ whiteSpace: 'pre-wrap', minWidth: '120px' }}>
               <Text variant="bodySm">{lastUpdated}</Text>
             </div>
           </IndexTable.Cell>
           <IndexTable.Cell>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', minWidth: '110px' }} onClick={(e) => e.stopPropagation()}>
               <Button icon={ViewMinor} accessibilityLabel="View" onClick={() => setViewingProduct(product)} />
               <Button size="slim" onClick={() => setImagePopup({ id, image_url, title })}>Edit</Button>
             </div>
@@ -660,7 +693,7 @@ function ImageManagerContent() {
           <Text as="p" color="subdued" variant="bodyMd">Audit and optimize product images to improve quality and discoverability.</Text>
         </div>
         <ButtonGroup>
-          <Button onClick={handleSync} loading={isSyncing}>Sync</Button>
+          <Button onClick={handleSync} loading={isSyncing}>Sync to Shopify</Button>
           <Button primary onClick={() => setIsUploadPageOpen(true)} disabled={isSyncing}>Upload</Button>
         </ButtonGroup>
       </Stack>
@@ -747,7 +780,6 @@ function ImageManagerContent() {
               { title: 'Product' },
               { title: 'Image Count' },
               { title: 'Duplicates', alignment: 'center' },
-              { title: 'Status' },
               { title: 'Last Updated' },
               { title: 'Action' },
             ]}

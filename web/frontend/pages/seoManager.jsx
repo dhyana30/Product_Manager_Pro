@@ -212,6 +212,48 @@ function SeoManagerContent() {
   const [isBulkEditing, setIsBulkEditing] = useState(false);
   const [bulkEditData, setBulkEditData] = useState({});
   const [isSavingBulk, setIsSavingBulk] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handleSyncToShopify = async () => {
+    if (selectedResources.length === 0) {
+      setError("Please select at least one product to sync.");
+      return;
+    }
+    
+    setIsSyncing(true);
+    try {
+      let offset = 0;
+      let jobId = null;
+      let more = true;
+      let totalPushed = 0;
+      while (more) {
+        const response = await authenticatedFetch("/api/sync/push", {
+          method: "POST",
+          body: JSON.stringify({ 
+            offset, jobId,
+            syncMode: 'seo',
+            selectedProductIds: selectedResources 
+          }),
+          headers: { "Content-Type": "application/json" }
+        });
+        const payload = await response.json();
+        if (payload.jobId) jobId = payload.jobId;
+        if (!response.ok) throw new Error(payload.message || "Push sync failed.");
+        
+        offset += (payload.pushed_this_batch || 0);
+        totalPushed += (payload.pushed_this_batch || 0);
+        more = payload.more_remaining;
+      }
+      
+      // Show success visually
+      await loadProducts();
+      clearSelection();
+    } catch (pushError) {
+      setError(pushError.message);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const handleStartBulkEdit = () => {
     if (selectedResources.length === 0) {
@@ -323,7 +365,7 @@ function SeoManagerContent() {
   const toggleBulkEditPopover = () => setBulkEditPopoverActive((active) => !active);
 
   const resourceName = { singular: 'product', plural: 'products' };
-  const { selectedResources, allResourcesSelected, handleSelectionChange } = useIndexResourceState(paginatedProducts);
+  const { selectedResources, allResourcesSelected, handleSelectionChange, clearSelection } = useIndexResourceState(paginatedProducts);
 
   const rowMarkup = paginatedProducts.map(
     (product, index) => {
@@ -612,6 +654,23 @@ function SeoManagerContent() {
         title="SEO Manager" 
         secondaryActions={[{ content: unreadCount > 0 ? `🔔 ${unreadCount}` : "🔔", onAction: () => navigate("/notifications") }]} 
       />
+      
+      <div style={{ marginTop: '16px', marginBottom: '8px' }}>
+        <Stack distribution="equalSpacing" alignment="center">
+          <div>
+            <Text as="p" color="subdued" variant="bodyMd">Manage and optimize product SEO to improve search engine rankings.</Text>
+          </div>
+          <ButtonGroup>
+            <Button loading={isSyncing} onClick={() => {
+              if (selectedResources.length === 0) {
+                setError("Please select at least one product to sync.");
+              } else {
+                handleSyncToShopify();
+              }
+            }}>Sync to Shopify</Button>
+          </ButtonGroup>
+        </Stack>
+      </div>
 
 
       <div style={{ marginTop: '24px' }}>
@@ -639,6 +698,7 @@ function SeoManagerContent() {
 
       <div style={{ marginTop: '24px' }}>
         <Card>
+
           <div style={{ padding: '16px', borderBottom: '1px solid #dfe3e8' }}>
             <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
               <div style={{ flex: 1, minWidth: '200px' }}>
@@ -689,6 +749,7 @@ function SeoManagerContent() {
                 itemCount={sortedProducts.length}
                 selectedItemsCount={allResourcesSelected ? 'All' : selectedResources.length}
                 onSelectionChange={handleSelectionChange}
+
                 headings={[
                   { title: 'Product' },
                   { title: 'Meta Title' },

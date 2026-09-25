@@ -9,6 +9,7 @@ import {
   IndexTable,
   TextField,
   ButtonGroup,
+  Pagination,
 } from "@shopify/polaris";
 import { TitleBar, useAuthenticatedFetch } from "@shopify/app-bridge-react";
 import * as XLSX from "xlsx";
@@ -22,6 +23,8 @@ export default function HealthDetails() {
   
   const [loading, setLoading] = useState(true);
   const [isScanning, setIsScanning] = useState(false);
+  const [affectedPage, setAffectedPage] = useState(1);
+  const [healthCheckPage, setHealthCheckPage] = useState(1);
   const [healthData, setHealthData] = useState({
     score: 0,
     affectedCount: 0,
@@ -53,6 +56,100 @@ export default function HealthDetails() {
   }, [fetchHealth]);
 
   const affectedProducts = healthData.affectedProducts || [];
+  useEffect(() => {
+    setAffectedPage(1);
+  }, [selectedTab, searchValue]);
+
+  const criticalCount = affectedProducts.filter(p => p.severity === 'Critical').length;
+  
+  const ITEMS_PER_PAGE = 5;
+
+  const getCheckStatus = (count, severity) => {
+    if (count === 0) return { icon: "✓", class: "green", action: <Text as="span" color="subdued">Passing</Text> };
+    if (severity === 'Critical') return { icon: "✕", class: "red", action: <Button plain>Fix all →</Button> };
+    if (severity === 'Warning') return { icon: "▲", class: "orange", action: <span className="review-link">Review →</span> };
+    return { icon: "i", class: "purple", action: <span className="review-link">Review →</span> };
+  };
+
+  const healthChecksList = [
+    {
+      id: 'missing-images',
+      icon: getCheckStatus(healthData.missingImagesCount, 'Critical').icon,
+      class: getCheckStatus(healthData.missingImagesCount, 'Critical').class,
+      title: 'Missing product images',
+      desc: 'At least one image required per listing',
+      weight: '25% of score',
+      count: healthData.missingImagesCount,
+      action: getCheckStatus(healthData.missingImagesCount, 'Critical').action
+    },
+    {
+      id: 'incomplete-desc',
+      icon: getCheckStatus(healthData.incompleteDescCount, 'Warning').icon,
+      class: getCheckStatus(healthData.incompleteDescCount, 'Warning').class,
+      title: 'Incomplete descriptions',
+      desc: 'Under 40 words or missing key attributes',
+      weight: '20% of score',
+      count: healthData.incompleteDescCount,
+      action: getCheckStatus(healthData.incompleteDescCount, 'Warning').action
+    },
+    {
+      id: 'dup-skus',
+      icon: getCheckStatus(healthData.duplicateSkuCount, 'Warning').icon,
+      class: getCheckStatus(healthData.duplicateSkuCount, 'Warning').class,
+      title: 'Duplicate SKUs',
+      desc: 'Same SKU used across multiple listings',
+      weight: '15% of score',
+      count: healthData.duplicateSkuCount,
+      action: getCheckStatus(healthData.duplicateSkuCount, 'Warning').action
+    },
+    {
+      id: 'missing-cats',
+      icon: getCheckStatus(healthData.missingCatsCount, 'Info').icon,
+      class: getCheckStatus(healthData.missingCatsCount, 'Info').class,
+      title: 'Missing categories',
+      desc: 'Not mapped to a storefront category',
+      weight: '15% of score',
+      count: healthData.missingCatsCount,
+      action: getCheckStatus(healthData.missingCatsCount, 'Info').action
+    },
+    {
+      id: 'pricing',
+      icon: '✓', class: 'green',
+      title: 'Pricing completeness',
+      desc: 'Valid price set for every active variant',
+      weight: '15% of score',
+      count: 0,
+      action: <Text as="span" color="subdued">Passing</Text>
+    },
+    {
+      id: 'seo-title',
+      icon: '✓', class: 'green',
+      title: 'SEO title length',
+      desc: 'Title between 20–70 characters',
+      weight: '10% of score',
+      count: 0,
+      action: <Text as="span" color="subdued">Passing</Text>
+    }
+  ];
+  
+  const paginatedHealthChecks = healthChecksList.slice((healthCheckPage - 1) * ITEMS_PER_PAGE, healthCheckPage * ITEMS_PER_PAGE);
+
+  const filteredProducts = affectedProducts.filter(p => {
+    if (selectedTab !== 'all' && p.severity.toLowerCase() !== selectedTab) return false;
+    if (searchValue) {
+      const searchLower = searchValue.toLowerCase();
+      const titleMatch = p.title && p.title.toLowerCase().includes(searchLower);
+      const skuMatch = p.sku && p.sku.toLowerCase().includes(searchLower);
+      const issueMatch = p.issue && p.issue.toLowerCase().includes(searchLower);
+      return titleMatch || skuMatch || issueMatch;
+    }
+    return true;
+  });
+  const warningCount = affectedProducts.filter(p => p.severity === 'Warning').length;
+  const infoCount = affectedProducts.filter(p => p.severity === 'Info').length;
+  
+  const paginatedProducts = filteredProducts.slice((affectedPage - 1) * ITEMS_PER_PAGE, affectedPage * ITEMS_PER_PAGE);
+
   const handleExport = () => {
     if (!healthData.affectedProducts || healthData.affectedProducts.length === 0) {
       alert("No issues to export.");
@@ -126,66 +223,6 @@ export default function HealthDetails() {
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-          {/* Mini Cards Row */}
-          <div className="mini-cards-row">
-            <div className="stretch-card-container">
-              <Card>
-                <div style={{ padding: "16px", height: "100%", display: "flex", flexDirection: "column" }}>
-                  <Text as="p" color="subdued" variant="bodyMd">
-                    Week over week
-                  </Text>
-                  <div style={{ margin: "4px 0", flexGrow: 1 }}>
-                    <Text as="p" variant="headingXl" color="critical">
-                      ↓ 3 pts
-                    </Text>
-                  </div>
-                  <div>
-                    <Text as="p" color="subdued" variant="bodySm">
-                      was 49 last Monday
-                    </Text>
-                  </div>
-                </div>
-              </Card>
-            </div>
-            <div className="stretch-card-container">
-              <Card>
-                <div style={{ padding: "16px", height: "100%", display: "flex", flexDirection: "column" }}>
-                  <Text as="p" color="subdued" variant="bodyMd">
-                    Checks passing
-                  </Text>
-                  <div style={{ margin: "4px 0", flexGrow: 1 }}>
-                    <Text as="p" variant="headingXl">
-                      2/6
-                    </Text>
-                  </div>
-                  <div>
-                    <Text as="p" color="subdued" variant="bodySm">
-                      4 need attention
-                    </Text>
-                  </div>
-                </div>
-              </Card>
-            </div>
-            <div className="stretch-card-container">
-              <Card>
-                <div style={{ padding: "16px", height: "100%", display: "flex", flexDirection: "column" }}>
-                  <Text as="p" color="subdued" variant="bodyMd">
-                    Resolved this week
-                  </Text>
-                  <div style={{ margin: "4px 0", flexGrow: 1 }}>
-                    <Text as="p" variant="headingXl" color="success">
-                      12
-                    </Text>
-                  </div>
-                  <div>
-                    <Text as="p" color="subdued" variant="bodySm">
-                      keep the streak going
-                    </Text>
-                  </div>
-                </div>
-              </Card>
-            </div>
-          </div>
 
           <div className="stretch-card-container" style={{ flexGrow: 1, minHeight: 0 }}>
             <Card>
@@ -231,7 +268,7 @@ export default function HealthDetails() {
         <Text as="h2" variant="headingLg">Issue counts</Text>
         <Text as="p" color="subdued">Across all active checks</Text>
       </div>
-      <div className="issue-counts-grid" style={{ marginBottom: "32px" }}>
+      <div className="issue-counts-grid" style={{ marginBottom: "32px", gridTemplateColumns: "repeat(3, 1fr)" }}>
         <div className="stretch-card-container">
           <Card>
             <div className="issue-card" style={{ height: "100%", display: "flex", flexDirection: "column" }}>
@@ -240,7 +277,7 @@ export default function HealthDetails() {
                 <div className="icon-badge red">!</div>
               </div>
               <div style={{ margin: "4px 0", flexGrow: 1 }}>
-                <Text as="p" variant="heading2xl">18</Text>
+                <Text as="p" variant="heading2xl">{criticalCount}</Text>
               </div>
               <div>
                 <Text as="p" color="subdued" variant="bodySm">Blocking — fix first</Text>
@@ -256,7 +293,7 @@ export default function HealthDetails() {
                 <div className="icon-badge orange">▲</div>
               </div>
               <div style={{ margin: "4px 0", flexGrow: 1 }}>
-                <Text as="p" variant="heading2xl">27</Text>
+                <Text as="p" variant="heading2xl">{warningCount}</Text>
               </div>
               <div>
                 <Text as="p" color="subdued" variant="bodySm">Degrades listing quality</Text>
@@ -272,26 +309,10 @@ export default function HealthDetails() {
                 <div className="icon-badge purple">i</div>
               </div>
               <div style={{ margin: "4px 0", flexGrow: 1 }}>
-                <Text as="p" variant="heading2xl">9</Text>
+                <Text as="p" variant="heading2xl">{infoCount}</Text>
               </div>
               <div>
                 <Text as="p" color="subdued" variant="bodySm">Nice to resolve</Text>
-              </div>
-            </div>
-          </Card>
-        </div>
-        <div className="stretch-card-container">
-          <Card>
-            <div className="issue-card" style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-              <div className="issue-header">
-                <Text as="p" color="subdued">Resolved this week</Text>
-                <div className="icon-badge green">✓</div>
-              </div>
-              <div style={{ margin: "4px 0", flexGrow: 1 }}>
-                <Text as="p" variant="heading2xl">12</Text>
-              </div>
-              <div>
-                <Text as="p" color="subdued" variant="bodySm">Keep the streak going</Text>
               </div>
             </div>
           </Card>
@@ -314,102 +335,37 @@ export default function HealthDetails() {
             </div>
             <Divider />
             
-            <div className="ct-row">
-              <div className="ct-col-main">
-                <div className="check-icon-wrapper red">✕</div>
-                <div>
-                  <Text as="p" fontWeight="bold">Missing product images</Text>
-                  <Text as="p" color="subdued" variant="bodySm">At least one image required per listing</Text>
+            {paginatedHealthChecks.map((check, i) => (
+              <div key={check.id}>
+                <div className="ct-row">
+                  <div className="ct-col-main">
+                    <div className={`check-icon-wrapper ${check.class}`}>{check.icon}</div>
+                    <div>
+                      <Text as="p" fontWeight="bold">{check.title}</Text>
+                      <Text as="p" color="subdued" variant="bodySm">{check.desc}</Text>
+                    </div>
+                  </div>
+                  <div className="ct-col-weight"><Text as="span">{check.weight}</Text></div>
+                  <div className="ct-col-affected">
+                    <Text as="p" fontWeight="bold">{check.count} products</Text>
+                    <Text as="p" color="subdued" variant="bodySm">of {healthData.totalCount}</Text>
+                  </div>
+                  <div className="ct-col-action">{check.action}</div>
                 </div>
+                {(i < paginatedHealthChecks.length - 1 || healthChecksList.length > ITEMS_PER_PAGE) && <Divider />}
               </div>
-              <div className="ct-col-weight"><Text as="span">25% of score</Text></div>
-              <div className="ct-col-affected">
-                <Text as="p" fontWeight="bold">{healthData.missingImagesCount} products</Text>\n<Text as="p" color="subdued" variant="bodySm">of {healthData.totalCount}</Text>
-              </div>
-              <div className="ct-col-action"><Button plain>Fix all →</Button></div>
-            </div>
-            <Divider />
-            
-            <div className="ct-row">
-              <div className="ct-col-main">
-                <div className="check-icon-wrapper red">✕</div>
-                <div>
-                  <Text as="p" fontWeight="bold">Incomplete descriptions</Text>
-                  <Text as="p" color="subdued" variant="bodySm">Under 40 words or missing key attributes</Text>
-                </div>
-              </div>
-              <div className="ct-col-weight"><Text as="span">20% of score</Text></div>
-              <div className="ct-col-affected">
-                <Text as="p" fontWeight="bold">{healthData.incompleteDescCount} products</Text>\n<Text as="p" color="subdued" variant="bodySm">of {healthData.totalCount}</Text>
-              </div>
-              <div className="ct-col-action"><Button plain>Fix all →</Button></div>
-            </div>
-            <Divider />
-
-            <div className="ct-row">
-              <div className="ct-col-main">
-                <div className="check-icon-wrapper orange">▲</div>
-                <div>
-                  <Text as="p" fontWeight="bold">Duplicate SKUs</Text>
-                  <Text as="p" color="subdued" variant="bodySm">Same SKU used across multiple listings</Text>
-                </div>
-              </div>
-              <div className="ct-col-weight"><Text as="span">15% of score</Text></div>
-              <div className="ct-col-affected">
-                <Text as="p" fontWeight="bold">{healthData.duplicateSkuCount} products</Text>\n<Text as="p" color="subdued" variant="bodySm">of {healthData.totalCount}</Text>
-              </div>
-              <div className="ct-col-action"><span className="review-link">Review →</span></div>
-            </div>
-            <Divider />
-
-            <div className="ct-row">
-              <div className="ct-col-main">
-                <div className="check-icon-wrapper orange">▲</div>
-                <div>
-                  <Text as="p" fontWeight="bold">Missing categories</Text>
-                  <Text as="p" color="subdued" variant="bodySm">Not mapped to a storefront category</Text>
-                </div>
-              </div>
-              <div className="ct-col-weight"><Text as="span">15% of score</Text></div>
-              <div className="ct-col-affected">
-                <Text as="p" fontWeight="bold">{healthData.missingCatsCount} products</Text>\n<Text as="p" color="subdued" variant="bodySm">of {healthData.totalCount}</Text>
-              </div>
-              <div className="ct-col-action"><span className="review-link">Review →</span></div>
-            </div>
-            <Divider />
-
-            <div className="ct-row">
-              <div className="ct-col-main">
-                <div className="check-icon-wrapper green">✓</div>
-                <div>
-                  <Text as="p" fontWeight="bold">Pricing completeness</Text>
-                  <Text as="p" color="subdued" variant="bodySm">Valid price set for every active variant</Text>
-                </div>
-              </div>
-              <div className="ct-col-weight"><Text as="span">15% of score</Text></div>
-              <div className="ct-col-affected">
-                <Text as="p" fontWeight="bold">0 products</Text>\n<Text as="p" color="subdued" variant="bodySm">of {healthData.totalCount}</Text>
-              </div>
-              <div className="ct-col-action"><Text as="span" color="subdued">Passing</Text></div>
-            </div>
-            <Divider />
-
-            <div className="ct-row">
-              <div className="ct-col-main">
-                <div className="check-icon-wrapper green">✓</div>
-                <div>
-                  <Text as="p" fontWeight="bold">SEO title length</Text>
-                  <Text as="p" color="subdued" variant="bodySm">Title between 20–70 characters</Text>
-                </div>
-              </div>
-              <div className="ct-col-weight"><Text as="span">10% of score</Text></div>
-              <div className="ct-col-affected">
-                <Text as="p" fontWeight="bold">0 products</Text>\n<Text as="p" color="subdued" variant="bodySm">of {healthData.totalCount}</Text>
-              </div>
-              <div className="ct-col-action"><Text as="span" color="subdued">Passing</Text></div>
-            </div>
-
+            ))}
           </div>
+          {healthChecksList.length > ITEMS_PER_PAGE && (
+            <div style={{ display: 'flex', justifyContent: 'center', padding: '16px', borderTop: '1px solid #e1e3e5' }}>
+              <Pagination
+                hasPrevious={healthCheckPage > 1}
+                onPrevious={() => setHealthCheckPage(healthCheckPage - 1)}
+                hasNext={healthCheckPage < Math.ceil(healthChecksList.length / ITEMS_PER_PAGE)}
+                onNext={() => setHealthCheckPage(healthCheckPage + 1)}
+              />
+            </div>
+          )}
         </Card>
       </div>
 
@@ -423,9 +379,9 @@ export default function HealthDetails() {
         <div style={{ padding: "16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px" }}>
           <div className="custom-tabs">
             <button className={`custom-tab ${selectedTab === 'all' ? 'active' : ''}`} onClick={() => setSelectedTab('all')}>All ({affectedProducts.length})</button>
-            <button className={`custom-tab ${selectedTab === 'critical' ? 'active' : ''}`} onClick={() => setSelectedTab('critical')}>Critical (18)</button>
-            <button className={`custom-tab ${selectedTab === 'warning' ? 'active' : ''}`} onClick={() => setSelectedTab('warning')}>Warning (27)</button>
-            <button className={`custom-tab ${selectedTab === 'info' ? 'active' : ''}`} onClick={() => setSelectedTab('info')}>Info (9)</button>
+            <button className={`custom-tab ${selectedTab === 'critical' ? 'active' : ''}`} onClick={() => setSelectedTab('critical')}>Critical ({criticalCount})</button>
+            <button className={`custom-tab ${selectedTab === 'warning' ? 'active' : ''}`} onClick={() => setSelectedTab('warning')}>Warning ({warningCount})</button>
+            <button className={`custom-tab ${selectedTab === 'info' ? 'active' : ''}`} onClick={() => setSelectedTab('info')}>Info ({infoCount})</button>
           </div>
           <div style={{ width: "300px", maxWidth: "100%" }}>
             <TextField
@@ -439,7 +395,7 @@ export default function HealthDetails() {
         
         <IndexTable
           resourceName={{ singular: 'product', plural: 'products' }}
-          itemCount={affectedProducts.length}
+          itemCount={filteredProducts.length}
           selectable={true}
           headings={[
             { title: 'PRODUCT' },
@@ -449,7 +405,7 @@ export default function HealthDetails() {
             { title: 'ACTIONS', hidden: true },
           ]}
         >
-          {affectedProducts.map((product, index) => {
+          {paginatedProducts.map((product, index) => {
             let tone = "success";
             if (product.severity === "Critical") tone = "critical";
             if (product.severity === "Warning") tone = "warning";
@@ -469,8 +425,8 @@ export default function HealthDetails() {
                 <IndexTable.Cell>{product.status}</IndexTable.Cell>
                 <IndexTable.Cell>
                   <ButtonGroup>
-                    <Button size="slim">Fix</Button>
-                    <Button size="slim">Open</Button>
+                    <Button size="slim" onClick={() => navigate('/product/' + product.id.split('-')[0])}>Fix</Button>
+                    <Button size="slim" onClick={() => navigate('/product/' + product.id.split('-')[0])}>Open</Button>
                   </ButtonGroup>
                 </IndexTable.Cell>
               </IndexTable.Row>
@@ -478,10 +434,16 @@ export default function HealthDetails() {
           })}
         </IndexTable>
         
-        <div style={{ padding: "16px", display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #ebebeb" }}>
-          <Text as="p" color="subdued" variant="bodySm">Showing 5 of 54 affected products</Text>
-          <Text as="p" color="subdued" variant="bodySm">Page 1 of 11 →</Text>
-        </div>
+        {filteredProducts.length > ITEMS_PER_PAGE && (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: '16px', borderTop: '1px solid #ebebeb' }}>
+            <Pagination
+              hasPrevious={affectedPage > 1}
+              onPrevious={() => setAffectedPage(affectedPage - 1)}
+              hasNext={affectedPage < Math.ceil(filteredProducts.length / ITEMS_PER_PAGE)}
+              onNext={() => setAffectedPage(affectedPage + 1)}
+            />
+          </div>
+        )}
       </Card>
       
       <div style={{ height: "40px" }} />

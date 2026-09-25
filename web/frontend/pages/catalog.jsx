@@ -144,14 +144,16 @@ export default function Catalog() {
         let totalSynced = 0;
         let jobId = null;
         
+        const selectedIds = selectedResources.length > 0 ? selectedResources : undefined;
         while (more) {
           const response = await authenticatedFetch("/api/sync/pull", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ cursor, jobId })
+            body: JSON.stringify({ cursor, jobId, selectedProductIds: selectedIds })
           });
           
           const payload = await readApiResponse(response);
+          if (payload.jobId) jobId = payload.jobId;
           if (!response.ok) throw new Error(payload.message || "Catalog sync failed.");
           
           totalSynced += (payload.synced || 0);
@@ -196,13 +198,15 @@ export default function Catalog() {
         let offset = 0;
         let more = true;
         let totalPushed = 0;
+        const selectedIds = selectedResources.length > 0 ? selectedResources : undefined;
         while (more) {
           const response = await authenticatedFetch("/api/sync/push", {
             method: "POST",
-            body: JSON.stringify({ offset }),
+            body: JSON.stringify({ offset, jobId, selectedProductIds: selectedIds }),
             headers: { "Content-Type": "application/json" }
           });
           const payload = await readApiResponse(response);
+          if (payload.jobId) jobId = payload.jobId;
           if (!response.ok) throw new Error(payload.message || "Push sync failed.");
           
           offset += payload.pushed_this_batch;
@@ -455,10 +459,22 @@ export default function Catalog() {
           <Stack alignment="center" distribution="equalSpacing">
             <Text variant="headingMd">Products</Text>
             <ButtonGroup>
-              <Button icon={ImportMinor} loading={isSyncing} disabled={isPushing} onClick={() => setConfirmSyncOpen(true)}>
+              <Button icon={ImportMinor} loading={isSyncing} disabled={isPushing} onClick={() => {
+                if (selectedResources.length === 0) {
+                  showToast("Please select at least one product to sync.", true);
+                } else {
+                  setConfirmSyncOpen(true);
+                }
+              }}>
                 Sync from Shopify
               </Button>
-              <Button icon={ExportMinor} loading={isPushing} disabled={isSyncing} onClick={() => setConfirmPushOpen(true)}>
+              <Button icon={ExportMinor} loading={isPushing} disabled={isSyncing} onClick={() => {
+                if (selectedResources.length === 0) {
+                  showToast("Please select at least one product to sync.", true);
+                } else {
+                  setConfirmPushOpen(true);
+                }
+              }}>
                 Sync to Shopify
               </Button>
               <CreateProductButton />
@@ -557,6 +573,19 @@ export default function Catalog() {
           itemCount={pageRows.length}
           selectedItemsCount={allResourcesSelected ? "All" : selectedResources.length}
           onSelectionChange={handleSelectionChange}
+          promotedBulkActions={[
+            {
+              content: 'Edit',
+              disabled: selectedResources.length !== 1,
+              onAction: () => {
+                if (selectedResources.length === 1) {
+                  const id = selectedResources[0];
+                  const product = products.find((p) => String(p.id) === String(id));
+                  if (product) handleStartEdit(product);
+                }
+              }
+            }
+          ]}
           headings={[...ALL_COLUMNS.map((c) => ({ title: c.label })), { title: "" }]}
           loading={isLoading}
         >
@@ -741,7 +770,7 @@ export default function Catalog() {
 function ProductRow({ row, index, columns, selected, isEditing, editData, onEditDataChange, onStartEdit, onCancelEdit, onSaveEdit, isSaving, onViewProduct, onImageClick }) {
   const timeZone = useStoreTimezone();
   return (
-    <IndexTable.Row id={String(row.id)} key={row.id} position={index} selected={selected}>
+    <IndexTable.Row id={String(row.id)} key={row.id} position={index} selected={selected} onClick={() => onViewProduct(row)}>
       {columns.map((col) => (
         <IndexTable.Cell key={col.key}>
           {col.key === "product" && (
@@ -760,7 +789,7 @@ function ProductRow({ row, index, columns, selected, isEditing, editData, onEdit
                 {isEditing ? (
                   <div onClick={(e) => e.stopPropagation()}><TextField value={editData.title} onChange={(v) => onEditDataChange({...editData, title: v})} autoComplete="off" /></div>
                 ) : (
-                  <div style={{ cursor: 'pointer', display: 'inline-block' }} onClick={(e) => { e.stopPropagation(); onStartEdit(); }}>
+                  <div style={{ cursor: 'pointer', display: 'inline-block' }} onClick={(e) => { e.stopPropagation(); onViewProduct(row); }}>
                     <Text variant="bodyMd" fontWeight="bold" as="span">{row.title}</Text>
                   </div>
                 )}
@@ -863,7 +892,7 @@ function CreateProductButton() {
   const navigate = useNavigate();
   return (
     <Button primary icon={PlusMinor} onClick={() => navigate('/product-create')}>
-      Create product
+      Add product
     </Button>
   );
 }
@@ -2423,7 +2452,7 @@ function ConfirmPushModal({ open, loading, onCancel, onConfirm }) {
       secondaryActions={[{ content: "Cancel", onAction: onCancel }]}
     >
       <Modal.Section>
-        <Text as="p">This will push your local changes (Products, Variants, Inventory, Images, ALT text, SEO, Tags, and Collections) back to Shopify.</Text>
+        <Text as="p">This will push local changes for the selected products (Products, Variants, Inventory, Images, ALT text, SEO, Tags, and Collections) back to Shopify.</Text>
         <div style={{ marginTop: '12px' }}>
           <Text as="p" color="subdued">It may take a few minutes depending on the size of your catalog.</Text>
         </div>
@@ -2442,7 +2471,7 @@ function ConfirmSyncModal({ open, loading, onCancel, onConfirm }) {
       secondaryActions={[{ content: "Cancel", onAction: onCancel }]}
     >
       <Modal.Section>
-        <Text as="p">This will pull Products, Variants, Inventory, Collections, Images, and Metafields from Shopify to the app's local database.</Text>
+        <Text as="p">This will pull the selected Products, Variants, Inventory, Collections, Images, and Metafields from Shopify to the app's local database.</Text>
         <div style={{ marginTop: '12px' }}>
           <Text as="p" color="subdued">It may take a few minutes depending on the size of your catalog.</Text>
         </div>

@@ -81,7 +81,9 @@ Route::middleware('shopify.auth')->group(function () {
         
         $imgScore = ($totalProducts - count($missingImages)) / $totalProducts * 100;
         $descScore = ($totalProducts - count($incompleteDesc)) / $totalProducts * 100;
-        $healthScoreValue = round(($imgScore * 0.25) + ($descScore * 0.20) + 15 + 15 + 15 + 10);
+        $dupScore = ($totalProducts - count($duplicateSkus)) / $totalProducts * 100;
+        $catScore = ($totalProducts - count($missingCats)) / $totalProducts * 100;
+        $healthScoreValue = round(($imgScore * 0.25) + ($descScore * 0.20) + ($dupScore * 0.15) + ($catScore * 0.15) + 15 + 10);
 
         return response()->json([
             'HEALTH_SCORE' => [
@@ -251,6 +253,14 @@ Route::middleware('shopify.auth')->group(function () {
                 'handle' => $product->handle,
                 'meta_title' => $product->meta_title,
                 'meta_description' => $product->meta_description,
+                'image_hash' => $product->image_hash ?: (function($url) {
+                    if (!$url) return null;
+                    if (str_contains($url, '/uploads/')) {
+                        $path = public_path('uploads/' . basename(parse_url($url, PHP_URL_PATH)));
+                        if (file_exists($path)) return hash_file('sha256', $path);
+                    }
+                    return $url;
+                })($product->image_url),
                 'image_url' => (function($url) {
                     if (!$url) return $url;
                     if (str_contains($url, '/uploads/')) {
@@ -311,6 +321,7 @@ Route::post('/products/{id}/image', function (Request $request, $id) {
 
         $file = $request->file('image');
         $filename = uniqid('product-image-', true) . '.' . $file->getClientOriginalExtension();
+        $hash = hash_file('sha256', $file->getRealPath());
         $file->move($uploadDirectory, $filename);
         $imageUrl = '/uploads/' . $filename;
         
@@ -343,6 +354,7 @@ Route::post('/products/{id}/image', function (Request $request, $id) {
             ->where('shop_domain', $shop)
             ->update([
                 'image_url' => $imageUrl,
+                'image_hash' => $hash,
                 'image_name' => pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME),
                 'updated_at' => now(),
                 'sync_pending' => true,
@@ -373,6 +385,25 @@ Route::post('/products/{id}/image', function (Request $request, $id) {
         } else {
             $productInput = $request->only(['title', 'vendor', 'status', 'tags', 'image_url', 'handle']);
             $productInput = $request->only(['title', 'vendor', 'status', 'tags', 'image_url', 'handle', 'image_name', 'image_alt', 'meta_title', 'meta_description']);
+            if (array_key_exists('image_url', $productInput)) {
+                if ($productInput['image_url'] === null) {
+                    $productInput['image_hash'] = null;
+                } else {
+                    $existingHash = DB::table('products_cache')->where('image_url', $productInput['image_url'])->whereNotNull('image_hash')->value('image_hash');
+                    if ($existingHash) {
+                        $productInput['image_hash'] = $existingHash;
+                    } else if (str_contains($productInput['image_url'], '/uploads/')) {
+                        $path = public_path('uploads/' . basename(parse_url($productInput['image_url'], PHP_URL_PATH)));
+                        if (file_exists($path)) {
+                            $productInput['image_hash'] = hash_file('sha256', $path);
+                        } else {
+                            $productInput['image_hash'] = null;
+                        }
+                    } else {
+                        $productInput['image_hash'] = null;
+                    }
+                }
+            }
             if (!empty($productInput)) {
                 $productInput['updated_at'] = now();
                 $productInput['sync_pending'] = true;
@@ -450,9 +481,7 @@ Route::post('/products/{id}/image', function (Request $request, $id) {
         }
         $variantInput['inventoryPolicy'] = filter_var($request->input('continueSelling', false), FILTER_VALIDATE_BOOLEAN) ? 'CONTINUE' : 'DENY';
 
-        if (!empty($variantInput)) {
-            $input['variants'] = [$variantInput];
-        }
+        // Variants are updated after product creation in modern Shopify API
         
         // Handle Media Uploads and Order
         $mediaInput = [];
@@ -462,10 +491,11 @@ Route::post('/products/{id}/image', function (Request $request, $id) {
         }
         
         $files = $request->file('media') ?: [];
-        $mediaOrderStr = $request->input('mediaOrder');
+        $mediaOrderInput = $request->input('mediaOrder');
         
-        if ($mediaOrderStr) {
-            $mediaOrder = json_decode($mediaOrderStr, true) ?? [];
+        if ($mediaOrderInput) {
+            $mediaOrder = is_string($mediaOrderInput) ? json_decode($mediaOrderInput, true) : $mediaOrderInput;
+            $mediaOrder = $mediaOrder ?? [];
             foreach ($mediaOrder as $item) {
                 if ($item['type'] === 'local') {
                     $fileIndex = $item['fileIndex'] ?? 0;
@@ -552,9 +582,19 @@ GRAPHQL;
         $shopDomain = $session->getShop();
         $variantNode = $product['variants']['nodes'][0] ?? null;
 
+        if ($variantNode && !empty($variantInput)) {
+            $variantInput['id'] = $variantNode['id'];
+            $client->query([
+                'query' => 'mutation productVariantUpdate($input: ProductVariantInput!) { productVariantUpdate(input: $input) { productVariant { id } userErrors { message field } } }',
+                'variables' => [
+                    'input' => $variantInput
+                ]
+            ]);
+        }
+
         // Set Inventory Quantities
-        $quantitiesStr = $request->input('quantities');
-        $quantities = $quantitiesStr ? json_decode($quantitiesStr, true) : [];
+        $quantitiesInput = $request->input('quantities');
+        $quantities = is_string($quantitiesInput) ? json_decode($quantitiesInput, true) : ($quantitiesInput ?? []);
         if ($variantNode && !empty($quantities) && filter_var($request->input('inventoryTracked', true), FILTER_VALIDATE_BOOLEAN)) {
             $setQuantities = [];
             foreach ($quantities as $locId => $qty) {
@@ -631,6 +671,33 @@ GRAPHQL;
         $cursor = $request->input('cursor');
         $synced = 0;
         
+        $searchQuery = null;
+        $syncMode = $request->input('syncMode');
+        $selectedProductIds = $request->input('selectedProductIds');
+        if (!empty($selectedProductIds)) {
+            $gids = DB::table('products_cache')
+                ->where('shop_domain', $shopDomain)
+                ->whereIn('id', $selectedProductIds)
+                ->pluck('product_gid')
+                ->toArray();
+                
+            if (!empty($gids)) {
+                $numericIds = array_map(function($gid) {
+                    return preg_replace('/[^0-9]/', '', basename($gid));
+                }, $gids);
+                
+                $searchQuery = implode(' OR ', array_map(function($id) {
+                    return "id:{$id}";
+                }, $numericIds));
+            } else {
+                return response()->json([
+                    'message' => 'No products synced',
+                    'synced' => 0,
+                    'next_cursor' => null
+                ]);
+            }
+        }
+        
         $jobId = $request->input('jobId');
         if (!$jobId && !$cursor) {
             $jobId = DB::table('bulk_jobs')->insertGetId([
@@ -647,8 +714,8 @@ GRAPHQL;
         try {
             $response = $client->query([
                 'query' => <<<'GRAPHQL'
-query ProductSync($cursor: String) {
-  products(first: 10, after: $cursor) {
+query ProductSync($cursor: String, $searchQuery: String) {
+  products(first: 10, after: $cursor, query: $searchQuery) {
     pageInfo { hasNextPage endCursor }
     nodes {
       id title handle vendor status tags
@@ -677,7 +744,7 @@ query ProductSync($cursor: String) {
   }
 }
 GRAPHQL,
-                'variables' => ['cursor' => $cursor],
+                'variables' => ['cursor' => $cursor, 'searchQuery' => $searchQuery],
             ]);
         } catch (\Throwable $exception) {
             report($exception);
@@ -698,7 +765,20 @@ GRAPHQL,
         }
 
         $connection = $body['data']['products'];
+        $productGids = array_map(fn($p) => $p['id'], $connection['nodes']);
+        $existingProducts = DB::table('products_cache')->where('shop_domain', $shopDomain)->whereIn('product_gid', $productGids)->get()->keyBy('product_gid');
+
         foreach ($connection['nodes'] as $product) {
+            $existing = $existingProducts[$product['id']] ?? null;
+            $newImageUrl = $product['featuredImage']['url'] ?? null;
+            $hashToKeep = null;
+            if ($existing && $existing->image_url && $newImageUrl) {
+                $oldFilename = basename(parse_url($existing->image_url, PHP_URL_PATH));
+                if ($newImageUrl === $existing->image_url || ($oldFilename && str_contains($newImageUrl, $oldFilename))) {
+                    $hashToKeep = $existing->image_hash;
+                }
+            }
+
             DB::table('products_cache')->updateOrInsert(
                 ['shop_domain' => $shopDomain, 'product_gid' => $product['id']],
                 [
@@ -707,7 +787,8 @@ GRAPHQL,
                     'vendor' => $product['vendor'],
                     'status' => strtolower($product['status']),
                     'tags' => json_encode($product['tags']),
-                    'image_url' => $product['featuredImage']['url'] ?? null,
+                    'image_url' => $newImageUrl,
+                    'image_hash' => $hashToKeep,
                     'meta_title' => $product['seo']['title'] ?? null,
                     'meta_description' => $product['seo']['description'] ?? null,
                     'images_data' => json_encode($product['images']['nodes'] ?? []),
@@ -843,15 +924,48 @@ GRAPHQL;
         $limit = 5; // process 5 at a time to be safe from rate limits
         
         $client = new \Shopify\Clients\Graphql($shop, $token);
-        $products = DB::table('products_cache')
-            ->where('shop_domain', $shop)
-            ->orderBy('id')
-            ->offset($offset)
-            ->limit($limit)
-            ->get();
+        $syncMode = $request->input('syncMode');
+        
+        $jobId = $request->input('jobId');
+        if (!$jobId && $offset === 0) {
+            $jobType = 'Catalog Push';
+            $jobName = 'Catalog Sync (Push)';
+            if ($syncMode === 'seo') {
+                $jobType = 'SEO Sync';
+                $jobName = 'SEO Sync';
+            } else if ($request->input('sync_files')) {
+                $jobType = 'Image Sync';
+                $jobName = 'Image Sync';
+            }
+            
+            $jobId = DB::table('bulk_jobs')->insertGetId([
+                'shop_domain' => $shop,
+                'job_name' => $jobName,
+                'job_type' => $jobType,
+                'status' => 'Running',
+                'records_affected' => 0,
+                'progress' => 0,
+                'started_at' => now(), 'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+        $selectedProductIds = $request->input('selectedProductIds');
+        $query = DB::table('products_cache')->where('shop_domain', $shop)->orderBy('id');
+        if (!empty($selectedProductIds)) {
+            $query->whereIn('id', $selectedProductIds);
+        }
+        $products = $query->offset($offset)->limit($limit)->get();
             
         if ($products->isEmpty()) {
-            return response()->json(['more_remaining' => false, 'pushed_this_batch' => 0]);
+            if ($jobId) {
+                DB::table('bulk_jobs')->where('id', $jobId)->update([
+                    'status' => 'Completed',
+                    'progress' => 100,
+                    'completed_at' => now(),
+                    'updated_at' => now()
+                ]);
+            }
+            return response()->json(['more_remaining' => false, 'pushed_this_batch' => 0, 'jobId' => $jobId]);
         }
             
         $pushed = 0;
@@ -871,19 +985,28 @@ GRAPHQL;
                     }
                 }
                 
-                $productInput = [
-                    'title' => $product->title,
-                    'vendor' => $product->vendor,
-                    'status' => $status,
-                    'tags' => json_decode($product->tags, true) ?? [],
-                    'seo' => [
-                        'title' => $product->meta_title ?? '',
-                        'description' => $product->meta_description ?? ''
-                    ]
-                ];
-                
-                if (!empty($product->handle)) {
-                    $productInput['handle'] = $product->handle;
+                if ($syncMode === 'seo') {
+                    $productInput = [
+                        'seo' => [
+                            'title' => $product->meta_title ?? '',
+                            'description' => $product->meta_description ?? ''
+                        ]
+                    ];
+                } else {
+                    $productInput = [
+                        'title' => $product->title,
+                        'vendor' => $product->vendor,
+                        'status' => $status,
+                        'tags' => json_decode($product->tags, true) ?? [],
+                        'seo' => [
+                            'title' => $product->meta_title ?? '',
+                            'description' => $product->meta_description ?? ''
+                        ]
+                    ];
+                    
+                    if (!empty($product->handle)) {
+                        $productInput['handle'] = $product->handle;
+                    }
                 }
                 
                 if ($exists) {
@@ -916,6 +1039,7 @@ GRAPHQL;
                     continue;
                 }
 
+                if ($syncMode !== 'seo') {
                 $variants = DB::table('variants_cache')->where('product_cache_id', $product->id)->get();
                 foreach ($variants as $variant) {
                     if ($variant->variant_gid) {
@@ -954,7 +1078,9 @@ GRAPHQL;
                     }
                 }
                 
-                if ($product->image_url) {
+                }
+                
+                if ($syncMode !== 'seo' && $product->image_url) {
                     $mediaUrl = str_starts_with($product->image_url, '/uploads/') ? 'https://' . $host . $product->image_url : $product->image_url;
                     
                     \Illuminate\Support\Facades\Log::info("Sending mediaUrl to Shopify: " . $mediaUrl);
@@ -1063,10 +1189,32 @@ GRAPHQL;
             }
         }
         
-        $hasMore = DB::table('products_cache')->where('shop_domain', $shop)->count() > ($offset + $pushed);
+        $countQuery = DB::table('products_cache')->where('shop_domain', $shop);
+        if (!empty($selectedProductIds)) {
+            $countQuery->whereIn('id', $selectedProductIds);
+        }
+        $hasMore = $countQuery->count() > ($offset + $pushed);
+        
+        if ($jobId) {
+            if ($hasMore) {
+                DB::table('bulk_jobs')->where('id', $jobId)->update([
+                    'records_affected' => DB::raw("records_affected + $pushed"),
+                    'updated_at' => now()
+                ]);
+            } else {
+                DB::table('bulk_jobs')->where('id', $jobId)->update([
+                    'status' => 'Completed',
+                    'records_affected' => DB::raw("records_affected + $pushed"),
+                    'progress' => 100,
+                    'completed_at' => now(),
+                    'updated_at' => now()
+                ]);
+            }
+        }
+        
         \Illuminate\Support\Facades\Log::info("Push sync batch complete. Offset: $offset, Pushed: $pushed, HasMore: " . ($hasMore ? 'true' : 'false') . ", Total count: " . DB::table('products_cache')->where('shop_domain', $shop)->count());
 
-        return response()->json(['more_remaining' => $hasMore, 'pushed_this_batch' => $pushed, 'completed_at' => now()->toIso8601String()]);
+        return response()->json(['more_remaining' => $hasMore, 'pushed_this_batch' => $pushed, 'completed_at' => now()->toIso8601String(), 'jobId' => $jobId]);
     });
 
     Route::get('/inventory', function (Request $request) {
@@ -1332,7 +1480,7 @@ GRAPHQL;
         $session = $request->get('shopifySession');
         $query = DB::table('bulk_jobs')
             ->where('shop_domain', $session->getShop())
-            ->whereIn('job_type', ['Catalog Sync', 'Catalog Push']);
+            ->whereIn('job_type', ['Catalog Sync', 'Catalog Push', 'Image Sync', 'SEO Sync']);
 
         if ($request->has('direction') && !empty($request->direction)) {
             $type = $request->direction === 'Sync from Shopify' ? 'Catalog Sync' : 'Catalog Push';
@@ -1347,8 +1495,13 @@ GRAPHQL;
         }
 
         $jobs = $query->orderBy('created_at', 'desc')->get()->map(function($job) {
-            $job->direction = $job->job_type === 'Catalog Sync' ? 'Sync from Shopify' : 'Sync to Shopify';
-            $job->direction = $job->job_type === 'Catalog Sync' ? 'From Shopify' : 'To Shopify';
+            if ($job->job_type === 'Catalog Sync') {
+                $job->direction = 'From Shopify';
+            } else if ($job->job_type === 'Catalog Push' || $job->job_type === 'Image Sync' || $job->job_type === 'SEO Sync') {
+                $job->direction = 'To Shopify';
+            } else {
+                $job->direction = 'Unknown';
+            }
             return $job;
         });
 
@@ -1614,7 +1767,9 @@ GRAPHQL;
         
         $imgScore = ($totalProducts - count($missingImages)) / $totalProducts * 100;
         $descScore = ($totalProducts - count($incompleteDesc)) / $totalProducts * 100;
-        $healthScore = round(($imgScore * 0.25) + ($descScore * 0.20) + 15 + 15 + 15 + 10);
+        $dupScore = ($totalProducts - count($duplicateSkus)) / $totalProducts * 100;
+        $catScore = ($totalProducts - count($missingCats)) / $totalProducts * 100;
+        $healthScore = round(($imgScore * 0.25) + ($descScore * 0.20) + ($dupScore * 0.15) + ($catScore * 0.15) + 15 + 10);
         
         return response()->json([
             'score' => $healthScore,
@@ -1633,3 +1788,123 @@ GRAPHQL;
 
 
 
+
+Route::get('/api/product-organization-options', function (Request $request) {
+    $session = $request->get('shopifySession');
+    $client = new Graphql($session->getShop(), $session->getAccessToken());
+    
+    $fetchAll = function($query, $dataPath, $client) {
+        $items = [];
+        $hasNextPage = true;
+        $cursor = null;
+        
+        while ($hasNextPage) {
+            $variables = ['cursor' => $cursor];
+            $response = $client->query(['query' => $query, 'variables' => $variables]);
+            $body = $response->getDecodedBody();
+            
+            if (isset($body['errors'])) {
+                throw new \Exception(json_encode($body['errors']));
+            }
+            
+            // Traverse data path
+            $connection = $body['data'];
+            foreach ($dataPath as $key) {
+                $connection = $connection[$key] ?? [];
+            }
+            
+            $edges = $connection['edges'] ?? [];
+            foreach ($edges as $edge) {
+                $items[] = $edge['node'];
+            }
+            
+            $pageInfo = $connection['pageInfo'] ?? ['hasNextPage' => false];
+            $hasNextPage = $pageInfo['hasNextPage'];
+            if ($hasNextPage && count($edges) > 0) {
+                $cursor = $edges[count($edges) - 1]['cursor'];
+            }
+        }
+        
+        return $items;
+    };
+    
+    // Product Types
+    $typesQuery = <<<'GRAPHQL'
+    query($cursor: String) {
+      shop {
+        productTypes(first: 250, after: $cursor) {
+          edges {
+            cursor
+            node
+          }
+          pageInfo {
+            hasNextPage
+          }
+        }
+      }
+    }
+GRAPHQL;
+    $types = $fetchAll($typesQuery, ['shop', 'productTypes'], $client);
+
+    // Vendors
+    $vendorsQuery = <<<'GRAPHQL'
+    query($cursor: String) {
+      shop {
+        productVendors(first: 250, after: $cursor) {
+          edges {
+            cursor
+            node
+          }
+          pageInfo {
+            hasNextPage
+          }
+        }
+      }
+    }
+GRAPHQL;
+    $vendors = $fetchAll($vendorsQuery, ['shop', 'productVendors'], $client);
+
+    // Tags
+    $tagsQuery = <<<'GRAPHQL'
+    query($cursor: String) {
+      shop {
+        productTags(first: 250, after: $cursor) {
+          edges {
+            cursor
+            node
+          }
+          pageInfo {
+            hasNextPage
+          }
+        }
+      }
+    }
+GRAPHQL;
+    $tags = $fetchAll($tagsQuery, ['shop', 'productTags'], $client);
+
+    // Collections
+    $collectionsQuery = <<<'GRAPHQL'
+    query($cursor: String) {
+      collections(first: 250, after: $cursor) {
+        edges {
+          cursor
+          node {
+            id
+            title
+          }
+        }
+        pageInfo {
+          hasNextPage
+        }
+      }
+    }
+GRAPHQL;
+    $collections = $fetchAll($collectionsQuery, ['collections'], $client);
+
+    return response()->json([
+        'types' => array_values(array_unique(array_filter($types))),
+        'vendors' => array_values(array_unique(array_filter($vendors))),
+        'tags' => array_values(array_unique(array_filter($tags))),
+        'collections' => $collections,
+    ]);
+});

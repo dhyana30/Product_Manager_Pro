@@ -992,6 +992,21 @@ function ProductEdit() {
 
   const fetch = useAuthenticatedFetch();
 
+  const [orgOptions, setOrgOptions] = useState({ types: [], vendors: [], tags: [], collections: [] });
+
+  useEffect(() => {
+    fetch('/api/product-organization-options')
+      .then(res => res.json())
+      .then(data => setOrgOptions({
+          types: data.types || [],
+          vendors: data.vendors || [],
+          tags: data.tags || [],
+          collections: data.collections || []
+      }))
+      .catch(err => console.error("Failed to load options", err));
+  }, []);
+
+
   const [inventoryTracked, setInventoryTracked] = useState(true);
   const [inventoryExpanded, setInventoryExpanded] = useState(false);
   const [sku, setSku] = useState('');
@@ -1257,7 +1272,7 @@ function ProductEdit() {
   return (
     <Page
       backAction={{ content: 'Products', onAction: () => navigate('/catalog') }}
-      title={product ? `Edit ${product.title}` : "Edit product"}
+      title="Edit"
       primaryAction={{
         content: 'Save',
         onAction: handleSave,
@@ -2331,9 +2346,6 @@ function ProductEdit() {
             <Card sectioned>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
                 <span style={{ fontSize: '16px', fontWeight: 600, color: '#202223' }}>Product organization</span>
-                <div style={{ color: '#5c5f62', display: 'flex' }}>
-                  <svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor"><path fillRule="evenodd" d="M10 20c5.514 0 10-4.486 10-10S15.514 0 10 0 0 4.486 0 10s4.486 10 10 10zm1-6a1 1 0 1 1-2 0v-4a1 1 0 1 1 2 0v4zm-1-9a1 1 0 1 0 0 2 1 1 0 0 0 0-2z" clipRule="evenodd"/></svg>
-                </div>
               </div>
               <FormLayout>
                 <div style={{ position: 'relative' }}>
@@ -2374,12 +2386,7 @@ function ProductEdit() {
                         />
                       </div>
                       <div style={{ overflowY: 'auto', padding: '8px 0' }}>
-                        {[
-                          'ABC', 'Air Con Gas', 'Apparel', 'Avr', 'Brenntag', 'Brown Bros', 'Cnh', 'Cnh Tractor & Harvester', 
-                          'Decco - Copsey', 'Hills Hi-Speed Plates', 'Husqvarna Forest & Garden', 'Insurance', 'Jcb', 
-                          'Jcb Service', 'Kent Industries', 'Kramp', 'Kramp Hardware', 'Krone', 'Kubota Lubricants', 'Kubota-', 
-                          'Kverneland', 'Miscellaneous-Agricultural', 'Parts', 'R K & J Jones', 'snowboard', 'Sparex', 'Steve Orr', 'Tama'
-                        ]
+                        {orgOptions.types
                         .filter(item => item.toLowerCase().includes(typeSearch.toLowerCase()))
                         .map((item) => (
                           <div 
@@ -2441,9 +2448,7 @@ function ProductEdit() {
                         />
                       </div>
                       <div style={{ overflowY: 'auto', padding: '8px 0' }}>
-                        {[
-                          'Acme Test Co.', 'AG', 'demo1-demo', 'demo1_demo', 'Hydrogen Vendor', 'MH', 'Multi-managed Vendor', 'NH', 'Snowboard Vendor'
-                        ]
+                        {orgOptions.vendors
                         .filter(item => item.toLowerCase().includes(vendorSearch.toLowerCase()))
                         .map((item) => (
                           <div 
@@ -2516,7 +2521,7 @@ function ProductEdit() {
                       </div>
                     </div>
                     <div style={{ overflowY: 'auto', padding: '8px 0', maxHeight: '200px' }}>
-                      {['Home page', 'Hydrogen', 'Smart Products Filter Index - Do not delete']
+                      {orgOptions.collections.map(c => c.title)
                       .filter(item => item.toLowerCase().includes(collectionSearch.toLowerCase()))
                       .map((item) => {
                         const isSelected = selectedCollections.includes(item);
@@ -2608,7 +2613,7 @@ function ProductEdit() {
                     </div>
                     <div style={{ overflowY: 'auto', padding: '8px 0', maxHeight: '250px' }}>
                       <div style={{ padding: '4px 16px', fontSize: '12px', color: '#6d7175' }}>Frequently used</div>
-                      {['Sport', 'Winter', 'Accessory', 'Premium', 'Snow']
+                      {orgOptions.tags
                       .filter(item => item.toLowerCase().includes(tagSearch.toLowerCase()))
                       .map((item) => {
                         const isSelected = selectedTags.includes(item);
