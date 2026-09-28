@@ -1079,6 +1079,7 @@ function ProductEdit() {
   const [storeMediaModalOpen, setStoreMediaModalOpen] = useState(false);
   const [storeMediaPopoverOpen, setStoreMediaPopoverOpen] = useState(false);
   const [mediaOrder, setMediaOrder] = useState([]);
+  const [mediaList, setMediaList] = useState([]);
   
   // Pricing states
   const [compareAtPrice, setCompareAtPrice] = useState('');
@@ -1106,8 +1107,19 @@ function ProductEdit() {
     fetchShop();
   }, [fetch]);
 
+  useEffect(() => {
+    if (mediaList.length > 0) {
+      if (imageUrl !== mediaList[0].url) setImageUrl(mediaList[0].url);
+    } else {
+      if (imageUrl !== '') setImageUrl('');
+    }
+  }, [mediaList]);
+
   const handleStoreMediaSelect = (files) => {
-     // placeholder for media logic
+     if (files && files.length > 0) {
+       const newMedia = files.map(f => ({ url: f.url }));
+       setMediaList(prev => [...prev, ...newMedia]);
+     }
      setStoreMediaModalOpen(false);
   };
 
@@ -1177,6 +1189,11 @@ function ProductEdit() {
       setSeoTitle(product.meta_title || '');
       setSeoDescription(product.meta_description || '');
       setImageUrl(product.image_url || '');
+      if (product.images_data && product.images_data.length > 0) {
+        setMediaList(product.images_data.map(img => ({ url: img.url })));
+      } else {
+        setMediaList(product.image_url ? [{ url: product.image_url }] : []);
+      }
       if (product.tags) {
         setSelectedTags(Array.isArray(product.tags) ? product.tags : [product.tags]);
       }
@@ -1230,6 +1247,13 @@ function ProductEdit() {
     const handleSave = async () => {
     setIsSaving(true);
     try {
+      const generatedMediaOrder = mediaList.map(media => {
+        if (media.url.startsWith('data:image/')) {
+          return { type: 'base64', data: media.url };
+        }
+        return { type: 'existing', url: media.url };
+      });
+
       const payload = {
         title,
         description: descriptionRef.current,
@@ -1245,7 +1269,8 @@ function ProductEdit() {
         cost_per_item: costPerItem,
         sku,
         barcode: barcodesList[0]?.value || '',
-        weight
+        weight,
+        mediaOrder: generatedMediaOrder
       };
 
       const response = await fetch(`/api/products/p_${id}`, {
@@ -1324,11 +1349,21 @@ function ProductEdit() {
 
             <Card title="Media" sectioned>
               <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-                {imageUrl && (
-                  <div style={{ width: '120px', height: '120px', border: '1px solid #dfe3e8', borderRadius: '8px', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <img src={imageUrl} alt="Product Media" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'cover' }} />
+                {mediaList.map((media, idx) => (
+                  <div key={idx} style={{ position: 'relative', width: '120px', height: '120px', border: '1px solid #dfe3e8', borderRadius: '8px', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <img src={media.url} alt={`Media ${idx+1}`} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'cover' }} />
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMediaList(prev => prev.filter((_, i) => i !== idx));
+                      }}
+                      style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(255,255,255,0.9)', border: 'none', borderRadius: '50%', width: 24, height: 24, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}
+                    >
+                      <Icon source={DeleteMinor} color="critical" />
+                    </button>
                   </div>
-                )}
+                ))}
+                
                 <Popover
                   active={storeMediaPopoverOpen}
                   activator={
@@ -1351,15 +1386,16 @@ function ProductEdit() {
                           const input = document.createElement('input');
                           input.type = 'file';
                           input.accept = 'image/*';
+                          input.multiple = true;
                           input.onchange = (e) => {
-                             const file = e.target.files[0];
-                             if (file) {
+                             const files = Array.from(e.target.files);
+                             files.forEach(file => {
                                const reader = new FileReader();
                                reader.onload = (ev) => {
-                                 setImageUrl(ev.target.result);
+                                 setMediaList(prev => [...prev, { url: ev.target.result }]);
                                };
                                reader.readAsDataURL(file);
-                             }
+                             });
                           };
                           input.click();
                         }

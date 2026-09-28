@@ -1065,7 +1065,9 @@ export default function ProductCreate() {
   const [description, setDescription] = useState('');
   const descriptionRef = useRef(description);
   const [storeMediaModalOpen, setStoreMediaModalOpen] = useState(false);
+  const [storeMediaPopoverOpen, setStoreMediaPopoverOpen] = useState(false);
   const [mediaOrder, setMediaOrder] = useState([]);
+  const [mediaList, setMediaList] = useState([]);
   
   // Pricing states
   const [compareAtPrice, setCompareAtPrice] = useState('');
@@ -1094,7 +1096,10 @@ export default function ProductCreate() {
   }, [fetch]);
 
   const handleStoreMediaSelect = (files) => {
-     // placeholder for media logic
+     if (files && files.length > 0) {
+       const newMedia = files.map(f => ({ url: f.url }));
+       setMediaList(prev => [...prev, ...newMedia]);
+     }
      setStoreMediaModalOpen(false);
   };
 
@@ -1214,7 +1219,7 @@ export default function ProductCreate() {
             referenceValue: unitBaseMeasure,
             referenceUnit: unitBaseUnit
           } : null,
-          mediaOrder,
+          mediaOrder: generatedMediaOrder,
           tags: selectedTags.join(','),
           seoTitle,
           seoDescription,
@@ -1315,17 +1320,100 @@ export default function ProductCreate() {
             </Card>
 
             <Card title="Media" sectioned>
-              <DropZone onDrop={() => {}}>
-                <div style={{ padding: '24px 0', textAlign: 'center' }}>
-                  <div style={{ marginBottom: '8px' }}>
-                    <Text variant="bodyMd" as="p" color="subdued">Accepts images, videos, or 3D models</Text>
+              <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                {mediaList.map((media, idx) => (
+                  <div key={idx} style={{ position: 'relative', width: '120px', height: '120px', border: '1px solid #dfe3e8', borderRadius: '8px', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <img src={media.url} alt={`Media ${idx+1}`} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'cover' }} />
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMediaList(prev => prev.filter((_, i) => i !== idx));
+                      }}
+                      style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(255,255,255,0.9)', border: 'none', borderRadius: '50%', width: 24, height: 24, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}
+                    >
+                      <Icon source={DeleteMinor} color="critical" />
+                    </button>
                   </div>
-                  <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '16px' }}>
-                    <Button onClick={(e) => e.stopPropagation()}>Add images</Button>
-                    <Button onClick={(e) => { e.stopPropagation(); setStoreMediaModalOpen(true); }}>Select existing</Button>
-                  </div>
-                </div>
-              </DropZone>
+                ))}
+                
+                {mediaList.length === 0 ? (
+                  <DropZone onDrop={() => {}}>
+                    <div style={{ padding: '24px 0', textAlign: 'center', width: '100%' }}>
+                      <div style={{ marginBottom: '8px' }}>
+                        <Text variant="bodyMd" as="p" color="subdued">Accepts images, videos, or 3D models</Text>
+                      </div>
+                      <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '16px' }}>
+                        <Button onClick={(e) => {
+                          e.stopPropagation();
+                          const input = document.createElement('input');
+                          input.type = 'file';
+                          input.accept = 'image/*';
+                          input.multiple = true;
+                          input.onchange = (ev) => {
+                             const files = Array.from(ev.target.files);
+                             files.forEach(file => {
+                               const reader = new FileReader();
+                               reader.onload = (readerEvent) => {
+                                 setMediaList(prev => [...prev, { url: readerEvent.target.result }]);
+                               };
+                               reader.readAsDataURL(file);
+                             });
+                          };
+                          input.click();
+                        }}>Add images</Button>
+                        <Button onClick={(e) => { e.stopPropagation(); setStoreMediaModalOpen(true); }}>Select existing</Button>
+                      </div>
+                    </div>
+                  </DropZone>
+                ) : (
+                  <Popover
+                    active={storeMediaPopoverOpen}
+                    activator={
+                      <div 
+                        style={{ width: '120px', height: '120px', border: '1px dashed #c9cccf', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', backgroundColor: '#fafbfb' }}
+                        onClick={() => setStoreMediaPopoverOpen(!storeMediaPopoverOpen)}
+                      >
+                        <Icon source={CirclePlusMinor} color="subdued" />
+                      </div>
+                    }
+                    onClose={() => setStoreMediaPopoverOpen(false)}
+                  >
+                    <ActionList
+                      actionRole="menuitem"
+                      items={[
+                        {
+                          content: 'Upload from device',
+                          onAction: () => {
+                            setStoreMediaPopoverOpen(false);
+                            const input = document.createElement('input');
+                            input.type = 'file';
+                            input.accept = 'image/*';
+                            input.multiple = true;
+                            input.onchange = (e) => {
+                               const files = Array.from(e.target.files);
+                               files.forEach(file => {
+                                 const reader = new FileReader();
+                                 reader.onload = (ev) => {
+                                   setMediaList(prev => [...prev, { url: ev.target.result }]);
+                                 };
+                                 reader.readAsDataURL(file);
+                               });
+                            };
+                            input.click();
+                          }
+                        },
+                        {
+                          content: 'Select existing',
+                          onAction: () => {
+                            setStoreMediaPopoverOpen(false);
+                            setStoreMediaModalOpen(true);
+                          }
+                        }
+                      ]}
+                    />
+                  </Popover>
+                )}
+              </div>
             </Card>
 
             <Card title="Category" sectioned>

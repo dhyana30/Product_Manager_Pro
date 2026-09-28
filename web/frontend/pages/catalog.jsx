@@ -78,12 +78,14 @@ const BULK_EDIT_COLUMNS = [
 ];
 
 const SORT_OPTIONS = [
-  { value: "title-asc", label: "Product title (A-Z)" },
-  { value: "title-desc", label: "Product title (Z-A)" },
-  { value: "price-asc", label: "Price (low to high)" },
-  { value: "price-desc", label: "Price (high to low)" },
-  { value: "created-desc", label: "Created (newest)" },
-  { value: "created-asc", label: "Created (oldest)" },
+  { value: "title-asc", label: "Title: A → Z" },
+  { value: "title-desc", label: "Title: Z → A" },
+  { value: "price-asc", label: "Price: Low → High" },
+  { value: "price-desc", label: "Price: High → Low" },
+  { value: "created-desc", label: "Created: Newest" },
+  { value: "created-asc", label: "Created: Oldest" },
+  { value: "updated-desc", label: "Updated: Newest" },
+  { value: "updated-asc", label: "Updated: Oldest" },
 ];
 
 export default function Catalog() {
@@ -198,6 +200,8 @@ export default function Catalog() {
         let offset = 0;
         let more = true;
         let totalPushed = 0;
+        let jobId = undefined;
+        let allErrors = [];
         const selectedIds = selectedResources.length > 0 ? selectedResources : undefined;
         while (more) {
           const response = await authenticatedFetch("/api/sync/push", {
@@ -209,9 +213,17 @@ export default function Catalog() {
           if (payload.jobId) jobId = payload.jobId;
           if (!response.ok) throw new Error(payload.message || "Push sync failed.");
           
+          if (payload.errors && payload.errors.length > 0) {
+            allErrors.push(...payload.errors);
+          }
+          
           offset += payload.pushed_this_batch;
           totalPushed += payload.pushed_this_batch;
           more = payload.more_remaining;
+        }
+        
+        if (allErrors.length > 0) {
+          throw new Error("Sync completed with errors: " + allErrors.join(", "));
         }
         
         await authenticatedFetch('/api/notifications', {
@@ -527,13 +539,13 @@ export default function Catalog() {
             onQueryChange={setQuery}
             onQueryClear={() => setQuery('')}
             onClearAll={() => { 
-              setStatusFilter("any"); 
-              setVendorFilter("any"); 
-              setInventoryFilter("any");
-              setImagesFilter("any");
-              setSeoFilter("any");
+              setStatusFilter(""); 
+              setVendorFilter(""); 
+              setInventoryFilter("");
+              setImagesFilter("");
+              setSeoFilter("");
               setTagsFilter("");
-              setDateFilter("any");
+              setDateFilter("");
               setQuery(""); 
             }}
           >
@@ -573,19 +585,6 @@ export default function Catalog() {
           itemCount={pageRows.length}
           selectedItemsCount={allResourcesSelected ? "All" : selectedResources.length}
           onSelectionChange={handleSelectionChange}
-          promotedBulkActions={[
-            {
-              content: 'Edit',
-              disabled: selectedResources.length !== 1,
-              onAction: () => {
-                if (selectedResources.length === 1) {
-                  const id = selectedResources[0];
-                  const product = products.find((p) => String(p.id) === String(id));
-                  if (product) handleStartEdit(product);
-                }
-              }
-            }
-          ]}
           headings={[...ALL_COLUMNS.map((c) => ({ title: c.label })), { title: "" }]}
           loading={isLoading}
         >
@@ -798,7 +797,7 @@ function ProductRow({ row, index, columns, selected, isEditing, editData, onEdit
           )}
           {col.key === "variants" && <Text as="span" color="subdued">{row.variants_list ? row.variants_list.length : "—"}</Text>}
           {col.key === "status" && (
-            <Badge status={row.status?.status || 'success'}>{row.status?.label || row.status}</Badge>
+            <Badge status={row.status?.status || 'success'}>{String(row.status?.label || row.status || '').charAt(0).toUpperCase() + String(row.status?.label || row.status || '').slice(1)}</Badge>
           )}
           {col.key === "vendor" && <Text as="span" color="subdued">{row.vendor || "—"}</Text>}
           {col.key === "inventory" && <Text as="span" color="subdued">{row.inventory ?? "—"}</Text>}
@@ -852,7 +851,7 @@ function ProductPreview({ row, onClose }) {
         </div>
         <div style={{ flex: 1 }}>
           <Text as="h3" variant="headingSm">{row.title}</Text>
-          <Badge status={row.status.status}>{row.status.label}</Badge>
+          <Badge status={row.status.status}>{String(row.status.label || '').charAt(0).toUpperCase() + String(row.status.label || '').slice(1)}</Badge>
         </div>
         <Button plain icon={HorizontalDotsMinor} accessibilityLabel="Close" onClick={onClose} />
       </div>
@@ -906,33 +905,33 @@ function FilterPopover(props) {
         {props.activeFilterCount > 0 ? `Filters (${props.activeFilterCount})` : "Filters"}
       </Button>
     }>
-      <div style={{ padding: '16px', minWidth: '250px', maxHeight: '400px', overflowY: 'auto' }}>
-        <Stack vertical spacing="tight">
-          <Select label="Status" placeholder="Select status" options={[
+      <div style={{ padding: '16px', minWidth: '250px', maxHeight: '450px', overflowY: 'auto' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <Select label="Status" labelHidden placeholder="Status" options={[
             { label: "Active", value: "active" },
             { label: "Draft", value: "draft" },
             { label: "Archived", value: "archived" },
           ]} value={props.statusFilter} onChange={props.setStatusFilter} />
-          <Select label="Vendor" placeholder="Select vendor" options={props.vendorOptions} value={props.vendorFilter} onChange={props.setVendorFilter} />
-          <Select label="Inventory" placeholder="Select inventory" options={[
+          <Select label="Vendor" labelHidden placeholder="Vendor" options={props.vendorOptions} value={props.vendorFilter} onChange={props.setVendorFilter} />
+          <Select label="Inventory" labelHidden placeholder="Inventory" options={[
             {label: 'In Stock', value: 'in-stock'},
             {label: 'Low Stock (< 10)', value: 'low-stock'},
             {label: 'Out of Stock', value: 'out-of-stock'},
           ]} value={props.inventoryFilter} onChange={props.setInventoryFilter} />
-          <Select label="Images" placeholder="Select images" options={[
+          <Select label="Images" labelHidden placeholder="Images" options={[
             {label: 'Has Images', value: 'has-images'},
             {label: 'Missing Images', value: 'missing-images'},
           ]} value={props.imagesFilter} onChange={props.setImagesFilter} />
-          <Select label="SEO" placeholder="Select SEO" options={[
+          <Select label="SEO" labelHidden placeholder="SEO" options={[
             {label: 'Missing SEO', value: 'missing-seo'},
           ]} value={props.seoFilter} onChange={props.setSeoFilter} />
-          <TextField label="Tags" placeholder="Search tags" value={props.tagsFilter} onChange={props.setTagsFilter} autoComplete="off" />
-          <Select label="Updated Date" placeholder="Select date" options={[
+          <Select label="Updated Date" labelHidden placeholder="Updated Date" options={[
             {label: 'Last 7 days', value: 'last-7-days'},
             {label: 'Last 30 days', value: 'last-30-days'},
           ]} value={props.dateFilter} onChange={props.setDateFilter} />
-        </Stack>
-        <div style={{ marginTop: '16px', borderTop: '1px solid #dfe3e8', paddingTop: '16px' }}>
+          <TextField label="Tags" labelHidden placeholder="Tags" value={props.tagsFilter} onChange={props.setTagsFilter} autoComplete="off" clearButton onClearButtonClick={() => props.setTagsFilter("")} />
+        </div>
+        <div style={{ marginTop: '16px', borderTop: '1px solid #dfe3e8', paddingTop: '16px', display: 'flex', justifyContent: 'flex-end' }}>
           <Button plain onClick={() => { props.onClearAll(); setOpen(false); }}>
             Clear filters
           </Button>
@@ -2514,8 +2513,11 @@ function sortProducts(products, sortValue) {
     sorted.sort((a, b) => {
       const aPrice = Number.parseFloat(a.price);
       const bPrice = Number.parseFloat(b.price);
-      if (Number.isNaN(aPrice)) return 1;
-      if (Number.isNaN(bPrice)) return -1;
+      const aIsNaN = Number.isNaN(aPrice);
+      const bIsNaN = Number.isNaN(bPrice);
+      if (aIsNaN && bIsNaN) return 0;
+      if (aIsNaN) return 1;
+      if (bIsNaN) return -1;
       return sortValue === "price-asc" ? aPrice - bPrice : bPrice - aPrice;
     });
   }
@@ -2525,7 +2527,22 @@ function sortProducts(products, sortValue) {
       const bCreated = Date.parse(b.created_at || b.published_at || "");
       const aValue = Number.isNaN(aCreated) ? Number(a.id) : aCreated;
       const bValue = Number.isNaN(bCreated) ? Number(b.id) : bCreated;
+      if (Number.isNaN(aCreated) && Number.isNaN(bCreated)) return sortValue === "created-asc" ? aValue - bValue : bValue - aValue;
+      if (Number.isNaN(aCreated)) return 1;
+      if (Number.isNaN(bCreated)) return -1;
       return sortValue === "created-asc" ? aValue - bValue : bValue - aValue;
+    });
+  }
+  if (sortValue === "updated-asc" || sortValue === "updated-desc") {
+    sorted.sort((a, b) => {
+      const aUpdated = Date.parse(a.updated_at || a.created_at || "");
+      const bUpdated = Date.parse(b.updated_at || b.created_at || "");
+      const aValue = Number.isNaN(aUpdated) ? Number(a.id) : aUpdated;
+      const bValue = Number.isNaN(bUpdated) ? Number(b.id) : bUpdated;
+      if (Number.isNaN(aUpdated) && Number.isNaN(bUpdated)) return sortValue === "updated-asc" ? aValue - bValue : bValue - aValue;
+      if (Number.isNaN(aUpdated)) return 1;
+      if (Number.isNaN(bUpdated)) return -1;
+      return sortValue === "updated-asc" ? aValue - bValue : bValue - aValue;
     });
   }
   return sorted;

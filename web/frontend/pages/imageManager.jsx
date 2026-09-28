@@ -56,8 +56,9 @@ function ImageManagerContent() {
       
       const mappedProducts = payload.data.map((product) => {
         const fullProduct = { ...product, status: { label: product.status, status: product.status === "active" ? "success" : "attention" }, inventory: String(product.inventory) };
-        const hasImage = !!product.image_url;
-        const imgCount = hasImage ? 1 : 0;
+        const imagesData = product.images_data || [];
+        const imgCount = imagesData.length > 0 ? imagesData.length : (product.image_url ? 1 : 0);
+        const hasImage = imgCount > 0;
         
         return {
           ...fullProduct,
@@ -78,24 +79,40 @@ function ImageManagerContent() {
         };
       });
 
+      const getIdentities = (p) => {
+        let idens = [];
+        if (p.images_data && p.images_data.length > 0) {
+          p.images_data.forEach(img => {
+            let iden = img.hash || img.url;
+            if (iden) idens.push(iden.split('?')[0]);
+          });
+        }
+        let rootIden = p.image_hash || p.image_url;
+        if (rootIden) {
+          idens.push(rootIden.split('?')[0]);
+        }
+        return [...new Set(idens)];
+      };
+
       const urlCounts = {};
       mappedProducts.forEach(p => {
-        // Group by image_hash (calculated by backend) or fallback to image_url
-        let identity = p.image_hash || p.image_url;
-        if (identity) identity = identity.split('?')[0];
-        if (identity) {
+        const idens = getIdentities(p);
+        idens.forEach(identity => {
           urlCounts[identity] = (urlCounts[identity] || 0) + 1;
-        }
+        });
       });
 
       mappedProducts.forEach(p => {
-        let identity = p.image_hash || p.image_url;
-        if (identity) identity = identity.split('?')[0];
-        if (identity) {
-          if (urlCounts[identity] > 1) {
-            p.duplicates = urlCounts[identity]; // Show total count instead of count - 1 to exactly match requirements "If used by 2 products, show 2"
-            p.imageManagerStatus = 'Duplicates found';
+        const idens = getIdentities(p);
+        let maxDup = 0;
+        idens.forEach(identity => {
+          if (urlCounts[identity] > 1 && urlCounts[identity] > maxDup) {
+            maxDup = urlCounts[identity];
           }
+        });
+        if (maxDup > 1) {
+          p.duplicates = maxDup;
+          p.imageManagerStatus = 'Duplicates found';
         }
       });
 
@@ -319,7 +336,7 @@ function ImageManagerContent() {
       const finalImageUrl = popupUploadFile ? payload.image_url : imagePopup.image_url;
       
       setProducts((current) => current.map((p) => (
-        p.id === imagePopup.id ? { ...p, image_url: finalImageUrl, imageCount: 1, missingImages: 0, imageManagerStatus: 'Good' } : p
+        p.id === imagePopup.id ? { ...p, image_url: finalImageUrl, imageCount: Math.max(1, p.imageCount || 0), missingImages: 0, imageManagerStatus: 'Good' } : p
       )));
       
       if (viewingProduct && viewingProduct.id === imagePopup.id) {
@@ -417,7 +434,7 @@ function ImageManagerContent() {
       const imageUrl = payload.image_url || selectedExistingImage.url;
       setProducts((currentProducts) => currentProducts.map((product) => (
         product.id === uploadProductId
-          ? { ...product, image_url: imageUrl, imageCount: 1, missingImages: 0, imageManagerStatus: 'Good' }
+          ? { ...product, image_url: imageUrl, imageCount: Math.max(1, product.imageCount || 0), missingImages: 0, imageManagerStatus: 'Good' }
           : product
       )));
       setIsUploadPageOpen(false);
@@ -715,7 +732,29 @@ function ImageManagerContent() {
             </div>
             <div style={{ flex: 1, textAlign: 'center' }}>
               <Text variant="bodySm" color="subdued">Duplicates</Text>
-              <Text variant="headingXl" color="critical">-</Text>
+              <Text variant="headingXl" color={(!isLoading && products.some(p => p.duplicates !== '-')) ? "critical" : undefined}>
+                {isLoading ? '-' : (() => {
+                  const counts = {};
+                  products.forEach(p => {
+                    let idens = [];
+                    if (p.images_data && p.images_data.length > 0) {
+                      p.images_data.forEach(img => {
+                        let iden = img.hash || img.url;
+                        if (iden) idens.push(iden.split('?')[0]);
+                      });
+                    }
+                    let rootIden = p.image_hash || p.image_url;
+                    if (rootIden) {
+                      idens.push(rootIden.split('?')[0]);
+                    }
+                    const uniqueIdens = [...new Set(idens)];
+                    uniqueIdens.forEach(identity => {
+                      counts[identity] = (counts[identity] || 0) + 1;
+                    });
+                  });
+                  return Object.values(counts).filter(c => c > 1).length;
+                })()}
+              </Text>
             </div>
           </div>
         </Card>
