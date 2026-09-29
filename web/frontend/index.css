@@ -18,6 +18,208 @@ body {
   color: #202223 !important;
 }
 
+.image-manager-table .Polaris-IndexTable__TableHeading {
+  padding: 5px 10px;
+}
+
+.image-manager-table .Polaris-IndexTable__TableCell {
+  padding: 3px 10px;
+}
+
+.image-manager-page .Polaris-Page__Content {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 16px 24px;
+  box-sizing: border-box;
+}
+
+.image-manager-page .Polaris-Card {
+  border: 1px solid #e1e3e5;
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.image-manager-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.image-manager-summary {
+  width: 100%;
+  margin-bottom: 16px;
+}
+
+.image-manager-summary-panel {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: stretch;
+}
+
+.image-manager-summary-card {
+  display: flex;
+  height: 72px;
+  box-sizing: border-box;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  padding: 12px 16px;
+  text-align: center;
+}
+
+.image-manager-summary-card + .image-manager-summary-card {
+  border-left: 1px solid #dfe3e8;
+}
+
+.image-manager-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.image-manager-search {
+  min-width: 0;
+}
+
+.image-manager-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.image-manager-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid #e1e3e5;
+}
+
+.image-manager-table .Polaris-IndexTable__Table {
+  display: block;
+  width: 100%;
+  min-width: 780px;
+  border-collapse: separate;
+}
+
+.image-manager-table .Polaris-IndexTable__Table thead,
+.image-manager-table .Polaris-IndexTable__Table tbody {
+  display: block;
+  width: 100%;
+}
+
+.image-manager-table .Polaris-IndexTable__Table thead tr,
+.image-manager-table .Polaris-IndexTable__Table tbody .Polaris-IndexTable__TableRow {
+  display: grid;
+  grid-template-columns: 42px minmax(280px, 2.2fr) minmax(90px, 0.6fr) minmax(100px, 0.8fr) minmax(150px, 1.1fr) minmax(140px, 1fr);
+  align-items: center;
+  width: 100%;
+}
+
+.image-manager-table .Polaris-IndexTable__TableBody .Polaris-IndexTable__TableRow {
+  min-height: 64px;
+  border-bottom: 1px solid #e1e3e5;
+  transition: background-color 120ms ease;
+}
+
+.image-manager-table .Polaris-IndexTable__TableBody .Polaris-IndexTable__TableRow:hover {
+  background-color: #f9fafb;
+}
+
+.image-manager-table .Polaris-IndexTable__TableHeading,
+.image-manager-table .Polaris-IndexTable__TableCell {
+  box-sizing: border-box;
+  width: auto;
+  min-width: 0;
+}
+
+.image-manager-table .Polaris-IndexTable__TableCell {
+  white-space: normal;
+}
+
+.image-manager-table .Polaris-IndexTable__TableHeading:first-child {
+  grid-column: 1;
+}
+
+.image-manager-table .Polaris-IndexTable__TableHeading:nth-child(2) {
+  grid-column: 2;
+}
+
+.image-manager-table .Polaris-IndexTable__TableHeading:nth-child(3) {
+  grid-column: 3;
+}
+
+.image-manager-table .Polaris-IndexTable__TableHeading:nth-child(4) {
+  grid-column: 4;
+}
+
+.image-manager-table .Polaris-IndexTable__TableHeading:nth-child(5) {
+  grid-column: 5;
+}
+
+.image-manager-table .Polaris-IndexTable__TableHeading:nth-child(6) {
+  grid-column: 6;
+}
+
+.image-manager-table .Polaris-IndexTable__TableCell:first-child {
+  display: flex;
+  justify-content: center;
+}
+
+.image-manager-table .Polaris-IndexTable__TableHeading {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 767px) {
+  .image-manager-page .Polaris-Page__Content {
+    width: 100%;
+    padding: 12px;
+  }
+
+  .image-manager-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .image-manager-summary-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .image-manager-summary-card:nth-child(3) {
+    border-left: 0;
+    border-top: 1px solid #dfe3e8;
+  }
+
+  .image-manager-summary-card:nth-child(4) {
+    border-top: 1px solid #dfe3e8;
+  }
+
+  .image-manager-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .image-manager-toolbar-actions {
+    flex-wrap: wrap;
+  }
+
+  .image-manager-table .Polaris-IndexTable__Table thead tr,
+  .image-manager-table .Polaris-IndexTable__Table tbody .Polaris-IndexTable__TableRow {
+    grid-template-columns: 36px minmax(220px, 1.8fr) minmax(78px, 0.55fr) minmax(90px, 0.7fr) minmax(130px, 1fr) minmax(120px, 0.9fr);
+  }
+
+  .image-manager-pagination {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
 
 
 /* Shopify style adjustments for Jodit Editor */

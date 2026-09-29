@@ -980,7 +980,7 @@ export default function ProductCreate() {
   const navigate = useNavigate();
   const fetch = useAuthenticatedFetch();
 
-  const [orgOptions, setOrgOptions] = useState({ types: [], vendors: [], tags: [], collections: [] });
+  const [orgOptions, setOrgOptions] = useState({ types: [], vendors: [], tags: [], collections: [], templates: [] });
 
   useEffect(() => {
     fetch('/api/product-organization-options')
@@ -989,7 +989,8 @@ export default function ProductCreate() {
           types: data.types || [],
           vendors: data.vendors || [],
           tags: data.tags || [],
-          collections: data.collections || []
+          collections: data.collections || [],
+          templates: data.templates || []
       }))
       .catch(err => console.error("Failed to load options", err));
   }, []);
@@ -1253,10 +1254,20 @@ export default function ProductCreate() {
       }
 
       setToastProps({ content: 'Product created successfully' });
+      await fetch('/api/notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: 'Catalog', title: 'Product created', message: `${title || 'Product'} was created successfully.` })
+      });
       setTimeout(() => navigate('/catalog'), 1000);
     } catch (error) {
       console.error(error);
       setToastProps({ content: error.message || 'Failed to create product', error: true });
+      fetch('/api/notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: 'Catalog', title: 'Product creation failed', message: error.message || 'Failed to create product.' })
+      });
     } finally {
       setIsSaving(false);
     }
@@ -1337,6 +1348,7 @@ export default function ProductCreate() {
                 ))}
                 
                 {mediaList.length === 0 ? (
+                  <div style={{ width: "100%" }}>
                   <DropZone onDrop={() => {}}>
                     <div style={{ padding: '24px 0', textAlign: 'center', width: '100%' }}>
                       <div style={{ marginBottom: '8px' }}>
@@ -1365,6 +1377,7 @@ export default function ProductCreate() {
                       </div>
                     </div>
                   </DropZone>
+                  </div>
                 ) : (
                   <Popover
                     active={storeMediaPopoverOpen}
@@ -2424,6 +2437,20 @@ export default function ProductCreate() {
                         />
                       </div>
                       <div style={{ overflowY: 'auto', padding: '8px 0' }}>
+                      {typeSearch && !orgOptions.types.some(t => t.toLowerCase() === typeSearch.toLowerCase()) && (
+                        <div 
+                          onClick={() => { setProductType(typeSearch); setTypePopoverOpen(false); }}
+                          style={{ 
+                            display: 'flex', 
+                            alignItems: 'center',
+                            padding: '8px 16px', 
+                            cursor: 'pointer', 
+                            backgroundColor: 'transparent',
+                          }}
+                        >
+                          <div style={{ fontSize: '14px', color: '#202223' }}>Add "{typeSearch}"</div>
+                        </div>
+                      )}
                         {orgOptions.types
                         .filter(item => item.toLowerCase().includes(typeSearch.toLowerCase()))
                         .map((item) => (
@@ -2651,6 +2678,23 @@ export default function ProductCreate() {
                     </div>
                     <div style={{ overflowY: 'auto', padding: '8px 0', maxHeight: '250px' }}>
                       <div style={{ padding: '4px 16px', fontSize: '12px', color: '#6d7175' }}>Frequently used</div>
+                      {tagSearch && !orgOptions.tags.some(t => t.toLowerCase() === tagSearch.toLowerCase()) && !selectedTags.includes(tagSearch) && (
+                        <div 
+                          onClick={() => {
+                            setSelectedTags([...selectedTags, tagSearch]);
+                            setTagSearch('');
+                          }}
+                          style={{ 
+                            display: 'flex', 
+                            alignItems: 'center',
+                            padding: '8px 16px', 
+                            cursor: 'pointer', 
+                            backgroundColor: 'transparent',
+                          }}
+                        >
+                          <div style={{ fontSize: '14px', color: '#202223' }}>Add "{tagSearch}"</div>
+                        </div>
+                      )}
                       {orgOptions.tags
                       .filter(item => item.toLowerCase().includes(tagSearch.toLowerCase()))
                       .map((item) => {
@@ -2746,7 +2790,7 @@ export default function ProductCreate() {
                 preferredAlignment="left"
               >
                 <div style={{ display: 'flex', flexDirection: 'column', padding: '8px 0' }}>
-                  {['Default product', 'best-saller'].map((item) => {
+                  {(orgOptions.templates && orgOptions.templates.length > 0 ? orgOptions.templates : ['Default product']).map((item) => {
                     const isSelected = selectedTemplate === item;
                     return (
                       <div 

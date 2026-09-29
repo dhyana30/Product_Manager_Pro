@@ -14,6 +14,7 @@ import {
 } from '@shopify/polaris-icons';
 import { TitleBar, useAuthenticatedFetch } from '@shopify/app-bridge-react';
 import { useStoreTimezone } from '../utils/storeTimezone';
+import { formatDateTime } from '../utils/timezone';
 
 export default function Notifications() {
   const navigate = useNavigate();
@@ -40,11 +41,12 @@ export default function Notifications() {
           
           const groups = {};
           items.forEach(item => {
-            let safeDate = item.created_at;
-            if (typeof safeDate === 'string' && !safeDate.includes('Z')) {
-              safeDate = safeDate.replace(' ', 'T') + 'Z';
-            }
-            const date = new Date(safeDate);
+            const date = new Date(
+              typeof item.created_at === 'string' && item.created_at.includes(' ') && !item.created_at.includes('T')
+                ? `${item.created_at.replace(' ', 'T')}Z`
+                : item.created_at
+            );
+            if (Number.isNaN(date.getTime())) return;
             const now = new Date();
             const yesterday = new Date(now.getTime() - 86400000);
             
@@ -66,7 +68,7 @@ export default function Notifications() {
               title: item.title,
               category: item.category,
               message: item.message,
-              time: date.toLocaleTimeString('en-US', { timeZone, hour: 'numeric', minute: '2-digit' }),
+              time: formatDateTime(item.created_at, timeZone),
               actionText: item.action_text || 'View details',
             });
           });

@@ -358,8 +358,18 @@ export default function Catalog() {
         return p;
       }));
       setEditingId(null);
+      authenticatedFetch('/api/notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: 'Catalog', title: 'Product updated', message: 'Product details updated successfully.' })
+      });
     } catch (e) {
       setError(e.message);
+      authenticatedFetch('/api/notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: 'Catalog', title: 'Product update failed', message: e.message || 'Product update failed.' })
+      });
     } finally {
       setIsSavingEdit(false);
     }
@@ -431,8 +441,19 @@ export default function Catalog() {
       }));
       setBulkEditorOpen(false);
       setSyncMessage("Bulk changes saved successfully.");
+      showToast("Bulk changes saved successfully.");
+      authenticatedFetch('/api/notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: 'Catalog', title: 'Bulk edit completed', message: `${Object.keys(changes).length} product records updated.` })
+      });
     } catch (bulkError) {
       setError(bulkError.message);
+      authenticatedFetch('/api/notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: 'Catalog', title: 'Bulk edit failed', message: bulkError.message })
+      });
     } finally {
       setIsSavingBulk(false);
     }

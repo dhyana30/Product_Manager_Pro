@@ -992,7 +992,7 @@ function ProductEdit() {
 
   const fetch = useAuthenticatedFetch();
 
-  const [orgOptions, setOrgOptions] = useState({ types: [], vendors: [], tags: [], collections: [] });
+  const [orgOptions, setOrgOptions] = useState({ types: [], vendors: [], tags: [], collections: [], templates: [] });
 
   useEffect(() => {
     fetch('/api/product-organization-options')
@@ -1001,7 +1001,8 @@ function ProductEdit() {
           types: data.types || [],
           vendors: data.vendors || [],
           tags: data.tags || [],
-          collections: data.collections || []
+          collections: data.collections || [],
+          templates: data.templates || []
       }))
       .catch(err => console.error("Failed to load options", err));
   }, []);
@@ -1286,9 +1287,19 @@ function ProductEdit() {
       }
 
       console.log('Product updated successfully');
+      await fetch('/api/notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: 'Catalog', title: 'Product updated', message: `${title || 'Product'} was updated successfully.` })
+      });
       navigate('/catalog');
     } catch (error) {
       console.error('Error saving product:', error);
+      fetch('/api/notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: 'Catalog', title: 'Product update failed', message: error.message || 'Product update failed.' })
+      });
     } finally {
       setIsSaving(false);
     }
@@ -2422,6 +2433,20 @@ function ProductEdit() {
                         />
                       </div>
                       <div style={{ overflowY: 'auto', padding: '8px 0' }}>
+                      {typeSearch && !orgOptions.types.some(t => t.toLowerCase() === typeSearch.toLowerCase()) && (
+                        <div 
+                          onClick={() => { setProductType(typeSearch); setTypePopoverOpen(false); }}
+                          style={{ 
+                            display: 'flex', 
+                            alignItems: 'center',
+                            padding: '8px 16px', 
+                            cursor: 'pointer', 
+                            backgroundColor: 'transparent',
+                          }}
+                        >
+                          <div style={{ fontSize: '14px', color: '#202223' }}>Add "{typeSearch}"</div>
+                        </div>
+                      )}
                         {orgOptions.types
                         .filter(item => item.toLowerCase().includes(typeSearch.toLowerCase()))
                         .map((item) => (
@@ -2649,6 +2674,23 @@ function ProductEdit() {
                     </div>
                     <div style={{ overflowY: 'auto', padding: '8px 0', maxHeight: '250px' }}>
                       <div style={{ padding: '4px 16px', fontSize: '12px', color: '#6d7175' }}>Frequently used</div>
+                      {tagSearch && !orgOptions.tags.some(t => t.toLowerCase() === tagSearch.toLowerCase()) && !selectedTags.includes(tagSearch) && (
+                        <div 
+                          onClick={() => {
+                            setSelectedTags([...selectedTags, tagSearch]);
+                            setTagSearch('');
+                          }}
+                          style={{ 
+                            display: 'flex', 
+                            alignItems: 'center',
+                            padding: '8px 16px', 
+                            cursor: 'pointer', 
+                            backgroundColor: 'transparent',
+                          }}
+                        >
+                          <div style={{ fontSize: '14px', color: '#202223' }}>Add "{tagSearch}"</div>
+                        </div>
+                      )}
                       {orgOptions.tags
                       .filter(item => item.toLowerCase().includes(tagSearch.toLowerCase()))
                       .map((item) => {
@@ -2744,7 +2786,7 @@ function ProductEdit() {
                 preferredAlignment="left"
               >
                 <div style={{ display: 'flex', flexDirection: 'column', padding: '8px 0' }}>
-                  {['Default product', 'best-saller'].map((item) => {
+                  {(orgOptions.templates && orgOptions.templates.length > 0 ? orgOptions.templates : ['Default product']).map((item) => {
                     const isSelected = selectedTemplate === item;
                     return (
                       <div 

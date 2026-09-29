@@ -306,8 +306,18 @@ function SeoManagerContent() {
       }));
       setIsBulkEditing(false);
       setSelectedResources([]);
+      authenticatedFetch('/api/notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: 'SEO', title: 'SEO updates completed', message: `${Object.keys(bulkEditData).length} product SEO records updated.` })
+      });
     } catch (err) {
       setError("Failed to save some products. Please try again.");
+      authenticatedFetch('/api/notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: 'SEO', title: 'SEO updates failed', message: err.message || 'Failed to save some SEO updates.' })
+      });
     } finally {
       setIsSavingBulk(false);
     }
@@ -346,8 +356,18 @@ function SeoManagerContent() {
         return p;
       }));
       setEditingId(null);
+      authenticatedFetch('/api/notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: 'SEO', title: 'SEO update completed', message: 'Product SEO data updated.' })
+      });
     } catch (err) {
       setError(err.message);
+      authenticatedFetch('/api/notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: 'SEO', title: 'SEO update failed', message: err.message || 'SEO update failed.' })
+      });
     } finally {
       setIsSavingEdit(false);
     }
@@ -462,7 +482,7 @@ function SeoManagerContent() {
 
   if (isBulkEditing) {
     return (
-      <Page fullWidth title="SEO Bulk Editor" backAction={{ content: "SEO Manager", onAction: () => setIsBulkEditing(false) }}>
+      <Page fullWidth >
         <div style={{ padding: '20px 0' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
             <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
@@ -649,7 +669,7 @@ function SeoManagerContent() {
   }
 
   return (
-    <Page fullWidth title="SEO Bulk Editor" backAction={{ content: "SEO Manager", onAction: () => setIsBulkEditing(false) }}>
+    <Page fullWidth >
       <TitleBar 
         title="SEO Manager" 
         secondaryActions={[{ content: unreadCount > 0 ? `🔔 ${unreadCount}` : "🔔", onAction: () => navigate("/notifications") }]} 

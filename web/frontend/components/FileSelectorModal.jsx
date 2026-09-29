@@ -91,7 +91,7 @@ export function FileSelectorModal({ open, onClose, onSelect, multiSelect = false
                 <Text color="subdued">No files match your search.</Text>
               </div>
             ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '16px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: '8px' }}>
             {filteredFiles.map((file) => {
               let name = 'Unknown';
               let ext = '';

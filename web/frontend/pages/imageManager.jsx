@@ -527,14 +527,14 @@ function ImageManagerContent() {
           position={index}
         >
           <IndexTable.Cell>
-            <div style={{ minWidth: '250px' }}>
+            <div style={{ minWidth: '220px' }}>
               <Stack wrap={false} alignment="center" spacing="tight">
                 {image_url ? (
                   <div onClick={(e) => { e.stopPropagation(); setImagePopup({ id, image_url, title }); }} style={{ cursor: 'pointer' }}>
-                    <img src={image_url} alt={title} style={{ width: '40px', height: '40px', objectFit: 'cover', borderRadius: '4px' }} />
+                    <img src={image_url} alt={title} style={{ width: '36px', height: '36px', objectFit: 'cover', borderRadius: '4px' }} />
                   </div>
                 ) : (
-                  <div style={{ width: '40px', height: '40px', background: '#f4f6f8', border: '1px solid #dfe3e8', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <div style={{ width: '36px', height: '36px', background: '#f4f6f8', border: '1px solid #dfe3e8', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <Icon source={ImageMajor} color="subdued" />
                   </div>
                 )}
@@ -547,23 +547,23 @@ function ImageManagerContent() {
             </div>
           </IndexTable.Cell>
           <IndexTable.Cell>
-            <div style={{ minWidth: '100px' }}>
+            <div style={{ minWidth: '72px' }}>
               <Text variant="bodyMd" fontWeight="bold">{imageCount}</Text>
             </div>
           </IndexTable.Cell>
           
           <IndexTable.Cell>
-            <div style={{ textAlign: 'center', minWidth: '90px' }}>
+            <div style={{ textAlign: 'center', minWidth: '72px' }}>
               <Text variant="bodyMd" color={duplicates !== '-' ? 'critical' : 'subdued'}>{duplicates}</Text>
             </div>
           </IndexTable.Cell>
           <IndexTable.Cell>
-            <div style={{ whiteSpace: 'pre-wrap', minWidth: '120px' }}>
+            <div style={{ whiteSpace: 'pre-wrap', minWidth: '96px' }}>
               <Text variant="bodySm">{lastUpdated}</Text>
             </div>
           </IndexTable.Cell>
           <IndexTable.Cell>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', minWidth: '110px' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', minWidth: '96px' }} onClick={(e) => e.stopPropagation()}>
               <Button icon={ViewMinor} accessibilityLabel="View" onClick={() => setViewingProduct(product)} />
               <Button size="slim" onClick={() => setImagePopup({ id, image_url, title })}>Edit</Button>
             </div>
@@ -588,15 +588,15 @@ function ImageManagerContent() {
             <Button primary onClick={handleSaveBulkEdit} loading={isSavingBulk}>Save all</Button>
           </div>
 
-          <div style={{ display: 'grid', gap: '16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: '16px' }}>
             {Object.entries(bulkEditData).map(([id, data]) => {
               const product = products.find((item) => item.id === id);
               if (!product) return null;
 
               return (
                 <Card key={id}>
-                  <div style={{ display: 'flex', gap: '24px', alignItems: 'flex-start', padding: '20px', flexWrap: 'wrap' }}>
-                    <div style={{ width: '180px', height: '140px', flex: '0 0 180px', border: '1px solid #dfe3e8', borderRadius: '8px', background: '#f9fafb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start', padding: '16px', flexWrap: 'nowrap' }}>
+                    <div style={{ width: '100px', height: '100px', flex: '0 0 100px', border: '1px solid #dfe3e8', borderRadius: '8px', background: '#f9fafb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {product.image_url ? (
                         <img src={product.image_url} alt={data.image_alt || product.title} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
                       ) : (
@@ -699,133 +699,135 @@ function ImageManagerContent() {
   }
 
   return (
-    <Page fullWidth>
+    <div className="image-manager-page">
+      <Page fullWidth>
       <TitleBar 
         title="Image Manager" 
         secondaryActions={[{ content: unreadCount > 0 ? `🔔 ${unreadCount}` : "🔔", onAction: () => navigate("/notifications") }]} 
       />
-      <Stack distribution="equalSpacing" alignment="center">
+      <div className="image-manager-header">
         <div>
-          
           <Text as="p" color="subdued" variant="bodyMd">Audit and optimize product images to improve quality and discoverability.</Text>
         </div>
         <ButtonGroup>
           <Button onClick={handleSync} loading={isSyncing}>Sync to Shopify</Button>
           <Button primary onClick={() => setIsUploadPageOpen(true)} disabled={isSyncing}>Upload</Button>
         </ButtonGroup>
-      </Stack>
+      </div>
 
-      <div style={{ marginTop: '24px', marginBottom: '24px' }}>
+      <div className="image-manager-summary">
         <Card>
-          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '20px' }}>
-            <div style={{ flex: 1, textAlign: 'center', borderRight: '1px solid #dfe3e8' }}>
+          <div className="image-manager-summary-panel">
+            <div className="image-manager-summary-card">
               <Text variant="bodySm" color="subdued">Total Products</Text>
-              <Text variant="headingXl">{isLoading ? '-' : products.length}</Text>
+              <Text variant="headingLg">{isLoading ? '-' : products.length}</Text>
             </div>
-            <div style={{ flex: 1, textAlign: 'center', borderRight: '1px solid #dfe3e8' }}>
+            <div className="image-manager-summary-card">
               <Text variant="bodySm" color="subdued">With Images</Text>
-              <Text variant="headingXl">{isLoading ? '-' : products.filter(p => p.imageCount > 0).length}</Text>
+              <Text variant="headingLg">{isLoading ? '-' : products.filter(p => p.imageCount > 0).length}</Text>
             </div>
-            <div style={{ flex: 1, textAlign: 'center', borderRight: '1px solid #dfe3e8' }}>
+            <div className="image-manager-summary-card">
               <Text variant="bodySm" color="subdued">No Images</Text>
-              <Text variant="headingXl">{isLoading ? '-' : products.filter(p => p.imageCount === 0).length}</Text>
+              <Text variant="headingLg">{isLoading ? '-' : products.filter(p => p.imageCount === 0).length}</Text>
             </div>
-            <div style={{ flex: 1, textAlign: 'center' }}>
-              <Text variant="bodySm" color="subdued">Duplicates</Text>
-              <Text variant="headingXl" color={(!isLoading && products.some(p => p.duplicates !== '-')) ? "critical" : undefined}>
-                {isLoading ? '-' : (() => {
-                  const counts = {};
-                  products.forEach(p => {
-                    let idens = [];
-                    if (p.images_data && p.images_data.length > 0) {
-                      p.images_data.forEach(img => {
-                        let iden = img.hash || img.url;
-                        if (iden) idens.push(iden.split('?')[0]);
-                      });
-                    }
-                    let rootIden = p.image_hash || p.image_url;
-                    if (rootIden) {
-                      idens.push(rootIden.split('?')[0]);
-                    }
-                    const uniqueIdens = [...new Set(idens)];
-                    uniqueIdens.forEach(identity => {
-                      counts[identity] = (counts[identity] || 0) + 1;
+            <div className="image-manager-summary-card">
+            <Text variant="bodySm" color="subdued">Duplicates</Text>
+            <Text variant="headingLg" color={(!isLoading && products.some(p => p.duplicates !== '-')) ? "critical" : undefined}>
+              {isLoading ? '-' : (() => {
+                const counts = {};
+                products.forEach(p => {
+                  let idens = [];
+                  if (p.images_data && p.images_data.length > 0) {
+                    p.images_data.forEach(img => {
+                      let iden = img.hash || img.url;
+                      if (iden) idens.push(iden.split('?')[0]);
                     });
+                  }
+                  let rootIden = p.image_hash || p.image_url;
+                  if (rootIden) {
+                    idens.push(rootIden.split('?')[0]);
+                  }
+                  const uniqueIdens = [...new Set(idens)];
+                  uniqueIdens.forEach(identity => {
+                    counts[identity] = (counts[identity] || 0) + 1;
                   });
-                  return Object.values(counts).filter(c => c > 1).length;
-                })()}
-              </Text>
+                });
+                return Object.values(counts).filter(c => c > 1).length;
+              })()}
+            </Text>
             </div>
           </div>
         </Card>
       </div>
 
-      <Card>
-        <div style={{ padding: '16px', borderBottom: '1px solid #dfe3e8' }}>
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <div style={{ flex: 1, minWidth: '200px' }}>
-              <TextField
-                value={query}
-                onChange={setQuery}
-                placeholder="Search products by title, SKU, barcode..."
-                autoComplete="off"
-                clearButton
-                onClearButtonClick={() => setQuery('')}
-                prefix={<Icon source={SearchMinor} />}
-              />
-            </div>
-            <FilterPopover 
-              statusFilter={statusFilter} setStatusFilter={setStatusFilter}
-              vendorFilter={vendorFilter} setVendorFilter={setVendorFilter}
-              inventoryFilter={inventoryFilter} setInventoryFilter={setInventoryFilter}
-              imagesFilter={imagesFilter} setImagesFilter={setImagesFilter}
-              seoFilter={seoFilter} setSeoFilter={setSeoFilter}
-              tagsFilter={tagsFilter} setTagsFilter={setTagsFilter}
-              dateFilter={dateFilter} setDateFilter={setDateFilter}
-              vendorOptions={vendorOptions}
-              activeFilterCount={activeFilterCount}
-              onClearAll={() => {
-                setStatusFilter("");
-                setVendorFilter("");
-                setInventoryFilter("");
-                setImagesFilter("");
-                setSeoFilter("");
-                setTagsFilter("");
-                setDateFilter("");
-                setQuery("");
-              }}
-            />
-            <SortPopover value={sortValue} onChange={setSortValue} />
-            <Button onClick={handleStartBulkEdit} disabled={selectedResources.length === 0}>
-              Bulk edit
-            </Button>
-          </div>
+      <div className="image-manager-toolbar">
+        <div className="image-manager-search">
+          <TextField
+            value={query}
+            onChange={setQuery}
+            placeholder="Search products by title, SKU, barcode..."
+            autoComplete="off"
+            clearButton
+            onClearButtonClick={() => setQuery('')}
+            prefix={<Icon source={SearchMinor} />}
+          />
         </div>
+        <div className="image-manager-toolbar-actions">
+          <FilterPopover
+            statusFilter={statusFilter} setStatusFilter={setStatusFilter}
+            vendorFilter={vendorFilter} setVendorFilter={setVendorFilter}
+            inventoryFilter={inventoryFilter} setInventoryFilter={setInventoryFilter}
+            imagesFilter={imagesFilter} setImagesFilter={setImagesFilter}
+            seoFilter={seoFilter} setSeoFilter={setSeoFilter}
+            tagsFilter={tagsFilter} setTagsFilter={setTagsFilter}
+            dateFilter={dateFilter} setDateFilter={setDateFilter}
+            vendorOptions={vendorOptions}
+            activeFilterCount={activeFilterCount}
+            onClearAll={() => {
+              setStatusFilter("");
+              setVendorFilter("");
+              setInventoryFilter("");
+              setImagesFilter("");
+              setSeoFilter("");
+              setTagsFilter("");
+              setDateFilter("");
+              setQuery("");
+            }}
+          />
+          <SortPopover value={sortValue} onChange={setSortValue} />
+          <Button onClick={handleStartBulkEdit} disabled={selectedResources.length === 0}>
+            Bulk edit
+          </Button>
+        </div>
+      </div>
 
-          {isLoading ? (
-            <div style={{ padding: '40px', textAlign: 'center' }}>
+      <Card>
+        {isLoading ? (
+            <div style={{ padding: '32px', textAlign: 'center' }}>
               <Spinner accessibilityLabel="Loading products" size="large" />
             </div>
           ) : (
             <>
-              <IndexTable
-            resourceName={resourceName}
-            itemCount={sortedProducts.length}
-            selectedItemsCount={
-              allResourcesSelected ? 'All' : selectedResources.length
-            }
-            onSelectionChange={handleSelectionChange}
-            headings={[
-              { title: 'Product' },
-              { title: 'Image Count' },
-              { title: 'Duplicates', alignment: 'center' },
-              { title: 'Last Updated' },
-              { title: 'Action' },
-            ]}
-          >
-            {rowMarkup}
-          </IndexTable>
-          <div style={{ padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #dfe3e8' }}>
+              <div className="image-manager-table">
+                <IndexTable
+                  resourceName={resourceName}
+                  itemCount={sortedProducts.length}
+                  selectedItemsCount={
+                    allResourcesSelected ? 'All' : selectedResources.length
+                  }
+                  onSelectionChange={handleSelectionChange}
+                  headings={[
+                    { title: 'Product' },
+                    { title: 'Image Count' },
+                    { title: 'Duplicates', alignment: 'center' },
+                    { title: 'Last Updated' },
+                    { title: 'Action' },
+                  ]}
+                >
+                  {rowMarkup}
+                </IndexTable>
+              </div>
+            <div className="image-manager-pagination">
               <Text as="span" color="subdued">
                 Showing {sortedProducts.length === 0 ? 0 : (page - 1) * PAGE_SIZE + 1} to{" "}
                 {Math.min(page * PAGE_SIZE, sortedProducts.length)} of {sortedProducts.length} products
@@ -833,8 +835,8 @@ function ImageManagerContent() {
               <PaginationBar page={page} pageCount={pageCount} onChange={setPage} />
             </div>
           </>
-          )}
-        </Card>
+        )}
+      </Card>
       {error && <Toast content={error} error onDismiss={() => setError("")} />}
       
       {imagePopup && !isFileSelectorOpen && (
@@ -1121,7 +1123,8 @@ function ImageManagerContent() {
           setUploadPreview(file.url);
         }}
       />
-    </Page>
+      </Page>
+    </div>
   );
 }
 

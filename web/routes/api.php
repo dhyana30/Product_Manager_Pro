@@ -28,6 +28,149 @@ Route::middleware('shopify.auth')->group(function () {
         ]);
     });
 
+Route::get('/product-organization-options', function (Request $request) {
+    $session = $request->get('shopifySession');
+    $client = new \Shopify\Clients\Graphql($session->getShop(), $session->getAccessToken());
+    
+    $fetchAll = function($query, $dataPath, $client) {
+        $items = [];
+        $hasNextPage = true;
+        $cursor = null;
+        
+        while ($hasNextPage) {
+            $variables = ['cursor' => $cursor];
+            $response = $client->query(['query' => $query, 'variables' => $variables]);
+            $body = $response->getDecodedBody();
+            
+            if (isset($body['errors'])) {
+                throw new \Exception(json_encode($body['errors']));
+            }
+            
+            $connection = $body['data'];
+            foreach ($dataPath as $key) {
+                $connection = $connection[$key] ?? [];
+            }
+            
+            $edges = $connection['edges'] ?? [];
+            foreach ($edges as $edge) {
+                $items[] = $edge['node'];
+            }
+            
+            $pageInfo = $connection['pageInfo'] ?? ['hasNextPage' => false];
+            $hasNextPage = $pageInfo['hasNextPage'];
+            if ($hasNextPage && count($edges) > 0) {
+                $cursor = $edges[count($edges) - 1]['cursor'];
+            }
+        }
+        
+        return $items;
+    };
+    
+    $fetchSimple = function($query, $dataPath, $client) {
+        $response = $client->query(['query' => $query]);
+        $body = $response->getDecodedBody();
+        if (isset($body['errors'])) throw new \Exception(json_encode($body['errors']));
+        
+        $connection = $body['data'];
+        foreach ($dataPath as $key) {
+            $connection = $connection[$key] ?? [];
+        }
+        $items = [];
+        $edges = $connection['edges'] ?? [];
+        foreach ($edges as $edge) {
+            $items[] = $edge['node'];
+        }
+        return $items;
+    };
+
+    // Product Types
+    $typesQuery = <<<'GRAPHQL'
+    query {
+      shop {
+        productTypes(first: 250) {
+          edges {
+            node
+          }
+        }
+      }
+    }
+GRAPHQL;
+    $types = $fetchSimple($typesQuery, ['shop', 'productTypes'], $client);
+
+    // Vendors
+    $vendorsQuery = <<<'GRAPHQL'
+    query {
+      shop {
+        productVendors(first: 250) {
+          edges {
+            node
+          }
+        }
+      }
+    }
+GRAPHQL;
+    $vendors = $fetchSimple($vendorsQuery, ['shop', 'productVendors'], $client);
+
+    // Tags
+    $tagsQuery = <<<'GRAPHQL'
+    query {
+      shop {
+        productTags(first: 250) {
+          edges {
+            node
+          }
+        }
+      }
+    }
+GRAPHQL;
+    $tags = $fetchSimple($tagsQuery, ['shop', 'productTags'], $client);
+
+    // Collections
+    $collectionsQuery = <<<'GRAPHQL'
+    query($cursor: String) {
+      collections(first: 250, after: $cursor) {
+        edges {
+          cursor
+          node {
+            id
+            title
+          }
+        }
+        pageInfo {
+          hasNextPage
+        }
+      }
+    }
+GRAPHQL;
+    $collections = $fetchAll($collectionsQuery, ['collections'], $client);
+
+        // Theme templates (via REST API)
+    $restClient = new \Shopify\Clients\Rest($session->getShop(), $session->getAccessToken());
+    $themesResponse = $restClient->get('themes');
+    $themes = $themesResponse->getDecodedBody()['themes'] ?? [];
+    $mainTheme = array_values(array_filter($themes, function($t) { return $t['role'] === 'main'; }))[0] ?? null;
+    $templates = ['Default product'];
+    
+    if ($mainTheme) {
+        $assetsResponse = $restClient->get("themes/{$mainTheme['id']}/assets");
+        $assets = $assetsResponse->getDecodedBody()['assets'] ?? [];
+        foreach ($assets as $asset) {
+            if (preg_match('/^templates\/product\.(.+)\.(json|liquid)$/', $asset['key'], $m)) {
+                $templates[] = $m[1];
+            }
+        }
+    }
+    
+    return response()->json([
+        'types' => array_values(array_unique(array_filter($types))),
+        'vendors' => array_values(array_unique(array_filter($vendors))),
+        'tags' => array_values(array_unique(array_filter($tags))),
+        'collections' => $collections,
+        'templates' => array_values(array_unique(array_filter($templates))),
+    ]);
+});
+
+
     Route::get('/dashboard', function (Request $request) {
         $shop = $request->get('shopifySession')->getShop();
 
@@ -241,16 +384,17 @@ Route::middleware('shopify.auth')->group(function () {
                 'created_at' => $product->created_at ? gmdate('Y-m-d\TH:i:s\Z', strtotime($product->created_at)) : null,
                 'updated_at' => $product->updated_at ? gmdate('Y-m-d\TH:i:s\Z', strtotime($product->updated_at)) : null,
                 'title' => $product->title,
-                'description' => $product->meta_description ?? '',
-                'product_type' => '—', // Fallback
-                'product_category' => '—', // Fallback
-                'testing' => $testing,
-                'online_store_scheduled' => 'false',
+                'description' => $product->description ?? ($product->meta_description ?? ''),
+                'product_type' => $product->product_type ?? '—',
+                'product_category' => $product->product_category ?? '—',
+                'testing' => $product->testing ?? $testing,
+                'online_store_scheduled' => $product->online_store_scheduled ?? 'false',
+                'online_store_publish_date' => $product->online_store_publish_date ?? '—',
                 'vendor' => $product->vendor ?: '—',
                 'status' => strtolower($product->status),
                 'tags' => $product->tags ? json_decode($product->tags, true) : [],
                 'collections' => $collectionTitles,
-                'template' => 'product',
+                'template' => $product->template ?? 'product',
                 'published_at' => strtolower($product->status) === 'active' ? (date('Y-m-d', strtotime($product->created_at))) : '',
                 'handle' => $product->handle,
                 'meta_title' => $product->meta_title,
@@ -287,7 +431,7 @@ Route::middleware('shopify.auth')->group(function () {
                     return $arr;
                 })($product->images_data),
                 'media' => $product->image_url,
-                'sales_channels' => '—',
+                'sales_channels' => $product->sales_channels ?? '—',
                 'variants_list' => $mergedVariants,
                 'sku' => $v1['sku'] ?? '',
                 'price' => $v1['price'] ?? '',
@@ -391,14 +535,33 @@ Route::post('/products/{id}/image', function (Request $request, $id) {
         }
 
         if ($isVariant) {
-            $variantInput = $request->only(['price', 'sku', 'title', 'inventory', 'barcode', 'weight', 'compare_at_price', 'cost_per_item', 'hs_code', 'origin', 'testing']);
+            $variantInput = $request->only(['price', 'sku', 'title', 'barcode', 'weight', 'compare_at_price', 'cost_per_item', 'hs_code', 'origin']);
             if (!empty($variantInput)) {
                 $variantInput['updated_at'] = now();
                 $variantInput['sync_pending'] = true;
                 DB::table('variants_cache')->where('id', $realId)->update($variantInput);
             }
         } else {
-            $productInput = $request->only(['title', 'vendor', 'status', 'tags', 'image_url', 'handle', 'image_name', 'image_alt', 'meta_title', 'meta_description']);
+            $productInput = $request->only([
+                'title',
+                'vendor',
+                'status',
+                'tags',
+                'image_url',
+                'handle',
+                'image_name',
+                'image_alt',
+                'meta_title',
+                'meta_description',
+                'description',
+                'product_type',
+                'product_category',
+                'template',
+                'sales_channels',
+                'online_store_scheduled',
+                'online_store_publish_date',
+                'testing',
+            ]);
             
             // Media array handling
             $mediaOrderInput = $request->input('mediaOrder');
@@ -497,7 +660,7 @@ Route::post('/products/{id}/image', function (Request $request, $id) {
                 DB::table('products_cache')->where('id', $realId)->where('shop_domain', $shop)->update($productInput);
             }
             
-            $variantInput = $request->only(['price', 'sku', 'inventory', 'compare_at_price', 'barcode', 'weight', 'cost_per_item', 'hs_code', 'origin']);
+            $variantInput = $request->only(['price', 'sku', 'compare_at_price', 'barcode', 'weight', 'cost_per_item', 'hs_code', 'origin']);
             if ($request->has('variant_title')) {
                 $variantInput['title'] = $request->input('variant_title');
             }
@@ -769,6 +932,7 @@ query ProductSync($cursor: String, $searchQuery: String) {
       publications(first: 10) { nodes { channel { name } } }
       productCategory { productTaxonomyNode { fullName } }
       variants(first: 50) {
+        pageInfo { hasNextPage endCursor }
                 nodes {
                     id title sku price
                     inventoryItem {
@@ -811,6 +975,70 @@ GRAPHQL,
         $existingProducts = DB::table('products_cache')->where('shop_domain', $shopDomain)->whereIn('product_gid', $productGids)->get()->keyBy('product_gid');
 
         foreach ($connection['nodes'] as $product) {
+            $variants = $product['variants']['nodes'] ?? [];
+            $variantPageInfo = $product['variants']['pageInfo'] ?? [];
+            $variantCursor = $variantPageInfo['endCursor'] ?? null;
+            while (!empty($variantPageInfo['hasNextPage']) && $variantCursor) {
+                $variantResponse = $client->query([
+                    'query' => <<<'GRAPHQL'
+query ProductVariantSync($id: ID!, $cursor: String) {
+  product(id: $id) {
+    variants(first: 50, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        id title sku price
+        inventoryItem {
+          id
+          inventoryLevels(first: 10) {
+            nodes {
+              location { id name }
+              quantities(names: ["available"]) { name quantity }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+GRAPHQL,
+                    'variables' => ['id' => $product['id'], 'cursor' => $variantCursor],
+                ])->getDecodedBody();
+
+                if (!empty($variantResponse['errors']) || empty($variantResponse['data']['product']['variants'])) {
+                    $variantErrors = $variantResponse['errors'] ?? [['message' => 'Shopify variant pagination returned no product data.']];
+                    if ($jobId) {
+                        DB::table('bulk_jobs')->where('id', $jobId)->update([
+                            'status' => 'Failed',
+                            'error_message' => json_encode($variantErrors),
+                            'completed_at' => now(),
+                        ]);
+                    }
+                    return response()->json([
+                        'message' => 'Shopify variant sync failed: ' . json_encode($variantErrors),
+                        'errors' => $variantErrors,
+                    ], 400);
+                }
+
+                $nextVariantPage = $variantResponse['data']['product']['variants'];
+                $variants = array_merge($variants, $nextVariantPage['nodes'] ?? []);
+                $variantPageInfo = $nextVariantPage['pageInfo'] ?? [];
+                $variantCursor = $variantPageInfo['endCursor'] ?? null;
+                if (!empty($variantPageInfo['hasNextPage']) && !$variantCursor) {
+                    $variantErrors = [['message' => 'Shopify variant pagination returned an incomplete page cursor.']];
+                    if ($jobId) {
+                        DB::table('bulk_jobs')->where('id', $jobId)->update([
+                            'status' => 'Failed',
+                            'error_message' => json_encode($variantErrors),
+                            'completed_at' => now(),
+                        ]);
+                    }
+                    return response()->json([
+                        'message' => 'Shopify variant sync failed: ' . json_encode($variantErrors),
+                        'errors' => $variantErrors,
+                    ], 400);
+                }
+            }
+
             $existing = $existingProducts[$product['id']] ?? null;
             $newImageUrl = $product['featuredImage']['url'] ?? null;
             $hashToKeep = null;
@@ -842,7 +1070,8 @@ GRAPHQL,
             );
             $cacheId = DB::table('products_cache')->where('shop_domain', $shopDomain)->where('product_gid', $product['id'])->value('id');
 
-            foreach ($product['variants']['nodes'] as $variant) {
+            $shopifyVariantGids = array_column($variants, 'id');
+            foreach ($variants as $variant) {
                 DB::table('variants_cache')->updateOrInsert(
                     ['variant_gid' => $variant['id']],
                     [
@@ -870,6 +1099,13 @@ GRAPHQL,
                     );
                 }
             }
+            $staleShopifyVariants = DB::table('variants_cache')
+                ->where('product_cache_id', $cacheId)
+                ->where('variant_gid', 'not like', 'local://%');
+            if (!empty($shopifyVariantGids)) {
+                $staleShopifyVariants->whereNotIn('variant_gid', $shopifyVariantGids);
+            }
+            $staleShopifyVariants->delete();
             $synced++;
         }
 
@@ -966,6 +1202,47 @@ GRAPHQL;
         $limit = 5; // process 5 at a time to be safe from rate limits
         
         $client = new \Shopify\Clients\Graphql($shop, $token);
+        $fetchProductVariantGids = function (string $productId) use ($client): ?array {
+            $variantGids = [];
+            $cursor = null;
+            $productFound = false;
+
+            do {
+                $page = $client->query([
+                    'query' => <<<'GRAPHQL'
+query ProductVariantIds($id: ID!, $cursor: String) {
+  product(id: $id) {
+    id
+    variants(first: 250, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      nodes { id }
+    }
+  }
+}
+GRAPHQL,
+                    'variables' => ['id' => $productId, 'cursor' => $cursor],
+                ])->getDecodedBody();
+
+                if (!empty($page['errors'])) {
+                    throw new \RuntimeException('Shopify variant lookup failed: ' . ($page['errors'][0]['message'] ?? json_encode($page['errors'])));
+                }
+
+                $product = $page['data']['product'] ?? null;
+                if (!$product) {
+                    return null;
+                }
+                $productFound = true;
+                $variantConnection = $product['variants'] ?? [];
+                $variantGids = array_merge($variantGids, array_column($variantConnection['nodes'] ?? [], 'id'));
+                $pageInfo = $variantConnection['pageInfo'] ?? [];
+                $cursor = !empty($pageInfo['hasNextPage']) ? ($pageInfo['endCursor'] ?? null) : null;
+                if (!empty($pageInfo['hasNextPage']) && !$cursor) {
+                    throw new \RuntimeException('Shopify variant lookup returned an incomplete page cursor.');
+                }
+            } while ($cursor !== null);
+
+            return $productFound ? array_values(array_unique($variantGids)) : null;
+        };
         $syncMode = $request->input('syncMode');
         
         $jobId = $request->input('jobId');
@@ -1018,14 +1295,17 @@ GRAPHQL;
                 $exists = false;
                 $productId = $product->product_gid;
                 $isLocal = str_starts_with($productId, 'local://');
+                $remoteVariantGids = [];
+                $createdOnShopify = false;
                 
                 if ($productId && !$isLocal) {
-                    $check = $client->query([
-                        'query' => 'query($id: ID!) { product(id: $id) { id } }',
-                        'variables' => ['id' => $productId]
-                    ])->getDecodedBody();
-                    if (!empty($check['data']['product']['id'])) {
-                        $exists = true;
+                    try {
+                        $remoteVariantGids = $fetchProductVariantGids($productId);
+                        $exists = $remoteVariantGids !== null;
+                    } catch (\Throwable $exception) {
+                        $batchErrors[] = "{$product->title}: " . $exception->getMessage();
+                        $pushed++;
+                        continue;
                     }
                 }
                 
@@ -1042,11 +1322,19 @@ GRAPHQL;
                         'vendor' => $product->vendor,
                         'status' => $status,
                         'tags' => json_decode($product->tags, true) ?? [],
+                        'descriptionHtml' => $product->description ?? '',
+                        'productType' => $product->product_type ?? '',
+                        'templateSuffix' => $product->template ?? '',
                         'seo' => [
                             'title' => $product->meta_title ?? '',
                             'description' => $product->meta_description ?? ''
                         ]
                     ];
+
+                    $storedCategory = trim((string) ($product->product_category ?? ''));
+                    if (preg_match('/^gid:\/\/shopify\/TaxonomyCategory\/[A-Za-z0-9._-]+$/', $storedCategory)) {
+                        $productInput['category'] = $storedCategory;
+                    }
                     
                     $syncHandle = $product->handle ?? '';
                     $syncHandle = str_replace('products/', '', $syncHandle);
@@ -1061,25 +1349,130 @@ GRAPHQL;
                 
                 if ($exists) {
                     $productInput['id'] = $productId;
-                    $client->query([
-                        'query' => 'mutation productUpdate($input: ProductInput!) { productUpdate(input: $input) { product { id } } }',
+                    $updateResponse = $client->query([
+                        'query' => 'mutation productUpdate($input: ProductInput!) { productUpdate(input: $input) { product { id } userErrors { field message } } }',
                         'variables' => ['input' => $productInput]
-                    ]);
+                    ])->getDecodedBody();
+                    $updateErrors = $updateResponse['data']['productUpdate']['userErrors'] ?? [];
+                    if (isset($updateResponse['errors'])) {
+                        $updateErrors = array_merge($updateErrors, $updateResponse['errors']);
+                    }
+                    if (!empty($updateErrors)) {
+                        $batchErrors[] = "{$product->title}: " . ($updateErrors[0]['message'] ?? 'Shopify product update failed.');
+                        $pushed++;
+                        continue;
+                    }
                 } else {
                     $response = $client->query([
-                        'query' => 'mutation productCreate($input: ProductInput!) { productCreate(input: $input) { product { id variants(first:1) { nodes { id inventoryItem { id } } } } userErrors { field message } } }',
+                        'query' => 'mutation productCreate($input: ProductInput!) { productCreate(input: $input) { product { id variants(first:1) { nodes { id title sku inventoryItem { id } } } } userErrors { field message } } }',
                         'variables' => ['input' => $productInput]
                     ])->getDecodedBody();
                     
+                    $createErrors = $response['data']['productCreate']['userErrors'] ?? [];
+                    if (isset($response['errors'])) {
+                        $createErrors = array_merge($createErrors, $response['errors']);
+                    }
+                    if (!empty($createErrors)) {
+                        $batchErrors[] = "{$product->title}: " . ($createErrors[0]['message'] ?? 'Shopify product creation failed.');
+                        $pushed++;
+                        continue;
+                    }
+
                     $productId = $response['data']['productCreate']['product']['id'] ?? null;
                     if ($productId) {
+                        $createdOnShopify = true;
                         DB::table('products_cache')->where('id', $product->id)->update(['product_gid' => $productId]);
+                        DB::table('variants_cache')
+                            ->where('product_cache_id', $product->id)
+                            ->where('variant_gid', 'not like', 'local://%')
+                            ->delete();
+
                         $defaultVariant = $response['data']['productCreate']['product']['variants']['nodes'][0] ?? null;
                         if ($defaultVariant) {
-                            DB::table('variants_cache')->where('product_cache_id', $product->id)->update([
-                                'variant_gid' => $defaultVariant['id'],
-                                'inventory_item_gid' => $defaultVariant['inventoryItem']['id']
-                            ]);
+                            $localVariants = DB::table('variants_cache')
+                                ->where('product_cache_id', $product->id)
+                                ->where('variant_gid', 'like', 'local://ProductVariant/%')
+                                ->orderBy('id')
+                                ->get();
+                            $defaultCacheVariant = $localVariants->first(function ($variant) use ($defaultVariant) {
+                                return !empty($defaultVariant['sku']) && $variant->sku === $defaultVariant['sku'];
+                            });
+                            if (!$defaultCacheVariant) {
+                                $defaultTitle = $defaultVariant['title'] ?? 'Default Title';
+                                $defaultCacheVariant = $localVariants->first(function ($variant) use ($defaultTitle) {
+                                    return ($variant->title ?? 'Default Title') === $defaultTitle;
+                                }) ?? $localVariants->first();
+                            }
+
+                            if ($defaultCacheVariant) {
+                                DB::table('variants_cache')->where('id', $defaultCacheVariant->id)->update([
+                                    'variant_gid' => $defaultVariant['id'],
+                                    'inventory_item_gid' => $defaultVariant['inventoryItem']['id'] ?? null,
+                                ]);
+                            }
+
+                            $additionalLocalVariants = $localVariants
+                                ->filter(fn($variant) => !$defaultCacheVariant || $variant->id !== $defaultCacheVariant->id)
+                                ->values();
+                            if (!$defaultCacheVariant && $localVariants->isNotEmpty()) {
+                                $batchErrors[] = "{$product->title}: Shopify created a default variant, but no local variant could be mapped to it.";
+                            }
+                            if ($additionalLocalVariants->isNotEmpty()) {
+                                $titles = $additionalLocalVariants->map(fn($variant) => trim((string) $variant->title))->all();
+                                $normalizedTitles = array_map('strtolower', $titles);
+                                $allTitles = array_merge(
+                                    [strtolower(trim((string) ($defaultVariant['title'] ?? 'Default Title')))],
+                                    $normalizedTitles
+                                );
+                                if (in_array('', $titles, true) || count($allTitles) !== count(array_unique($allTitles))) {
+                                    $batchErrors[] = "{$product->title}: Local variants need distinct, non-empty titles to create Shopify variants.";
+                                } else {
+                                    $variantsToCreate = $additionalLocalVariants->map(function ($variant) {
+                                        return [
+                                            'optionValues' => [[
+                                                'optionName' => 'Title',
+                                                'name' => trim((string) $variant->title),
+                                            ]],
+                                        ];
+                                    })->all();
+                                    try {
+                                        $createVariantsResponse = $client->query([
+                                            'query' => 'mutation productVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) { productVariantsBulkCreate(productId: $productId, variants: $variants, strategy: PRESERVE_STANDALONE_VARIANT) { productVariants { id title selectedOptions { name value } inventoryItem { id } } userErrors { field message } } }',
+                                            'variables' => [
+                                                'productId' => $productId,
+                                                'variants' => $variantsToCreate,
+                                            ],
+                                        ])->getDecodedBody();
+                                    } catch (\Throwable $exception) {
+                                        $createVariantsResponse = ['errors' => [['message' => $exception->getMessage()]]];
+                                    }
+
+                                    $variantCreateErrors = $createVariantsResponse['data']['productVariantsBulkCreate']['userErrors'] ?? [];
+                                    if (!empty($createVariantsResponse['errors'])) {
+                                        $variantCreateErrors = array_merge($variantCreateErrors, $createVariantsResponse['errors']);
+                                    }
+                                    $mappedAdditionalVariantIds = [];
+                                    foreach ($createVariantsResponse['data']['productVariantsBulkCreate']['productVariants'] ?? [] as $createdVariant) {
+                                        $createdTitle = collect($createdVariant['selectedOptions'] ?? [])
+                                            ->firstWhere('name', 'Title')['value'] ?? null;
+                                        $matchingLocalVariant = $additionalLocalVariants->first(
+                                            fn($variant) => $createdTitle !== null && trim((string) $variant->title) === $createdTitle
+                                        );
+                                        if ($matchingLocalVariant) {
+                                            DB::table('variants_cache')->where('id', $matchingLocalVariant->id)->update([
+                                                'variant_gid' => $createdVariant['id'],
+                                                'inventory_item_gid' => $createdVariant['inventoryItem']['id'] ?? null,
+                                            ]);
+                                            $mappedAdditionalVariantIds[] = $matchingLocalVariant->id;
+                                        }
+                                    }
+                                    if (!empty($variantCreateErrors)) {
+                                        $batchErrors[] = "{$product->title} additional variants: " . ($variantCreateErrors[0]['message'] ?? 'Shopify variant creation failed.');
+                                    } elseif (count($mappedAdditionalVariantIds) !== $additionalLocalVariants->count()) {
+                                        $batchErrors[] = "{$product->title}: Shopify did not return a matching ID for every newly created variant.";
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1096,14 +1489,36 @@ GRAPHQL;
                 }
 
                 if ($syncMode !== 'seo') {
+                    if ($createdOnShopify) {
+                        try {
+                            $remoteVariantGids = $fetchProductVariantGids($productId);
+                        } catch (\Throwable $exception) {
+                            $batchErrors[] = "{$product->title}: " . $exception->getMessage();
+                            $pushed++;
+                            continue;
+                        }
+                        if ($remoteVariantGids === null) {
+                            $batchErrors[] = "{$product->title}: Shopify product was created but its variants could not be verified.";
+                            $pushed++;
+                            continue;
+                        }
+                    }
+
+                    $staleShopifyVariants = DB::table('variants_cache')
+                        ->where('product_cache_id', $product->id)
+                        ->where('variant_gid', 'not like', 'local://%');
+                    if (!empty($remoteVariantGids)) {
+                        $staleShopifyVariants->whereNotIn('variant_gid', $remoteVariantGids);
+                    }
+                    $staleShopifyVariants->delete();
+
                     $variants = DB::table('variants_cache')->where('product_cache_id', $product->id)->get();
                     $variantsInput = [];
                     
                     foreach ($variants as $variant) {
-                        if ($variant->variant_gid) {
+                        if ($variant->variant_gid && in_array($variant->variant_gid, $remoteVariantGids, true)) {
                             $vInput = [ 'id' => $variant->variant_gid ];
                             if ($variant->price !== null) $vInput['price'] = $variant->price;
-                            if ($variant->sku !== null) $vInput['sku'] = $variant->sku;
                             if (isset($variant->compare_at_price) && $variant->compare_at_price !== null) $vInput['compareAtPrice'] = $variant->compare_at_price;
                             if (isset($variant->barcode) && $variant->barcode !== null) $vInput['barcode'] = $variant->barcode;
                             if (isset($variant->weight) && $variant->weight !== null && (float)$variant->weight > 0) {
@@ -1112,6 +1527,7 @@ GRAPHQL;
                             }
                             
                             $invInput = [];
+                            if ($variant->sku !== null) $invInput['sku'] = $variant->sku;
                             if (isset($variant->cost_per_item) && $variant->cost_per_item !== null) $invInput['cost'] = $variant->cost_per_item;
                             if (isset($variant->origin) && $variant->origin !== null) $invInput['countryCodeOfOrigin'] = $variant->origin;
                             if (isset($variant->hs_code) && $variant->hs_code !== null) $invInput['harmonizedSystemCode'] = $variant->hs_code;
@@ -1288,7 +1704,12 @@ GRAPHQL;
 
                 $pushed++;
                 DB::table('products_cache')->where('id', $product->id)->update(['sync_pending' => false]);
-                DB::table('variants_cache')->where('product_cache_id', $product->id)->update(['sync_pending' => false]);
+                if ($syncMode !== 'seo' && !empty($remoteVariantGids)) {
+                    DB::table('variants_cache')
+                        ->where('product_cache_id', $product->id)
+                        ->whereIn('variant_gid', $remoteVariantGids)
+                        ->update(['sync_pending' => false]);
+                }
                 
             } catch (\Throwable $exception) {
                 \Illuminate\Support\Facades\Log::error('Push sync error: ' . $exception->getMessage());
@@ -1358,11 +1779,59 @@ GRAPHQL;
         return response()->json(['message' => 'Inventory adjustment queued', 'data' => $data], 202);
     });
 
-    Route::get('/notifications', function () {
-        return response()->json(['data' => [
-            ['id' => 1, 'category' => 'inventory', 'title' => 'Low stock alert', 'message' => '23 products are below threshold.', 'read' => false],
-            ['id' => 2, 'category' => 'catalog', 'title' => 'Catalog sync completed', 'message' => '1,284 products checked.', 'read' => true],
-        ]]);
+    Route::get('/notifications', function (Request $request) {
+        $shop = $request->get('shopifySession')->getShop();
+        $notifications = DB::table('notifications')
+            ->where('shop_domain', $shop)
+            ->orderByDesc('created_at')
+            ->limit(100)
+            ->get()
+            ->map(function ($notification) {
+                $title = strtolower($notification->title);
+                $message = strtolower($notification->message);
+                $severity = str_contains($title, 'failed') || str_contains($title, 'error') || str_contains($message, 'failed')
+                    ? 'error'
+                    : (str_contains($title, 'warning') || str_contains($title, 'partial')
+                        ? 'warning'
+                        : (str_contains($title, 'completed') || str_contains($title, 'updated') || str_contains($title, 'created')
+                            ? 'success'
+                            : 'info'));
+
+                return [
+                    'id' => $notification->id,
+                    'category' => $notification->category,
+                    'title' => $notification->title,
+                    'message' => $notification->message,
+                    'severity' => $severity,
+                    'created_at' => $notification->created_at,
+                ];
+            });
+
+        return response()->json(['data' => $notifications]);
+    });
+
+    Route::post('/notifications', function (Request $request) {
+        $shop = $request->get('shopifySession')->getShop();
+        $data = $request->validate([
+            'category' => ['required', 'string', 'max:80'],
+            'title' => ['required', 'string', 'max:160'],
+            'message' => ['required', 'string', 'max:1000'],
+        ]);
+
+        if (str_contains(strtolower($data['title']), 'started')) {
+            return response()->json(['success' => true, 'stored' => false]);
+        }
+
+        $id = DB::table('notifications')->insertGetId([
+            'shop_domain' => $shop,
+            'category' => $data['category'],
+            'title' => $data['title'],
+            'message' => $data['message'],
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return response()->json(['success' => true, 'stored' => true, 'id' => $id], 201);
     });
 
     Route::get('/notifications/read', function (Request $request) {
@@ -1908,129 +2377,7 @@ GRAPHQL;
 
 
 
-Route::get('/api/product-organization-options', function (Request $request) {
-    $session = $request->get('shopifySession');
-    $client = new \Shopify\Clients\Graphql($session->getShop(), $session->getAccessToken());
-    
-    $fetchAll = function($query, $dataPath, $client) {
-        $items = [];
-        $hasNextPage = true;
-        $cursor = null;
-        
-        while ($hasNextPage) {
-            $variables = ['cursor' => $cursor];
-            $response = $client->query(['query' => $query, 'variables' => $variables]);
-            $body = $response->getDecodedBody();
-            
-            if (isset($body['errors'])) {
-                throw new \Exception(json_encode($body['errors']));
-            }
-            
-            $connection = $body['data'];
-            foreach ($dataPath as $key) {
-                $connection = $connection[$key] ?? [];
-            }
-            
-            $edges = $connection['edges'] ?? [];
-            foreach ($edges as $edge) {
-                $items[] = $edge['node'];
-            }
-            
-            $pageInfo = $connection['pageInfo'] ?? ['hasNextPage' => false];
-            $hasNextPage = $pageInfo['hasNextPage'];
-            if ($hasNextPage && count($edges) > 0) {
-                $cursor = $edges[count($edges) - 1]['cursor'];
-            }
-        }
-        
-        return $items;
-    };
-    
-    $fetchSimple = function($query, $dataPath, $client) {
-        $response = $client->query(['query' => $query]);
-        $body = $response->getDecodedBody();
-        if (isset($body['errors'])) throw new \Exception(json_encode($body['errors']));
-        
-        $connection = $body['data'];
-        foreach ($dataPath as $key) {
-            $connection = $connection[$key] ?? [];
-        }
-        $items = [];
-        $edges = $connection['edges'] ?? [];
-        foreach ($edges as $edge) {
-            $items[] = $edge['node'];
-        }
-        return $items;
-    };
 
-    // Product Types
-    $typesQuery = <<<'GRAPHQL'
-    query {
-      shop {
-        productTypes(first: 250) {
-          edges {
-            node
-          }
-        }
-      }
-    }
-GRAPHQL;
-    $types = $fetchSimple($typesQuery, ['shop', 'productTypes'], $client);
-
-    // Vendors
-    $vendorsQuery = <<<'GRAPHQL'
-    query {
-      shop {
-        productVendors(first: 250) {
-          edges {
-            node
-          }
-        }
-      }
-    }
-GRAPHQL;
-    $vendors = $fetchSimple($vendorsQuery, ['shop', 'productVendors'], $client);
-
-    // Tags
-    $tagsQuery = <<<'GRAPHQL'
-    query {
-      shop {
-        productTags(first: 250) {
-          edges {
-            node
-          }
-        }
-      }
-    }
-GRAPHQL;
-    $tags = $fetchSimple($tagsQuery, ['shop', 'productTags'], $client);
-
-    // Collections
-    $collectionsQuery = <<<'GRAPHQL'
-    query($cursor: String) {
-      collections(first: 250, after: $cursor) {
-        edges {
-          cursor
-          node {
-            id
-            title
-          }
-        }
-        pageInfo {
-          hasNextPage
-        }
-      }
-    }
-GRAPHQL;
-    $collections = $fetchAll($collectionsQuery, ['collections'], $client);
-
-    return response()->json([
-        'types' => array_values(array_unique(array_filter($types))),
-        'vendors' => array_values(array_unique(array_filter($vendors))),
-        'tags' => array_values(array_unique(array_filter($tags))),
-        'collections' => $collections,
-    ]);
-});
 
 Route::get('/debug/db', function() {
     return response()->json(Illuminate\Support\Facades\Schema::getColumnListing('variants_cache'));
