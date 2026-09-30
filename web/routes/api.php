@@ -182,11 +182,16 @@ GRAPHQL;
         $draftProductsCount = DB::table('products_cache')->where('shop_domain', $shop)->where('status', 'draft')->count();
         $totalInventory = DB::table('inventory_cache')
             ->join('products_cache', 'inventory_cache.product_cache_id', '=', 'products_cache.id')
+            ->leftJoin('variants_cache', 'variants_cache.id', '=', 'inventory_cache.variant_cache_id')
             ->where('products_cache.shop_domain', $shop)
+            ->whereNull('variants_cache.superseded_by_variant_cache_id')
             ->sum('available');
 
                 $products = Illuminate\Support\Facades\DB::table('products_cache')->where('shop_domain', $shop)->get();
-        $variants = Illuminate\Support\Facades\DB::table('variants_cache')->whereIn('product_cache_id', $products->pluck('id'))->get();
+        $variants = Illuminate\Support\Facades\DB::table('variants_cache')
+            ->whereIn('product_cache_id', $products->pluck('id'))
+            ->whereNull('superseded_by_variant_cache_id')
+            ->get();
         
         $missingImages = [];
         $incompleteDesc = [];
@@ -305,7 +310,10 @@ GRAPHQL;
         $products = $productsQuery->forPage($page, $perPage)->get();
 
         $allProductIds = $products->pluck('id')->toArray();
-        $allVariants = DB::table('variants_cache')->whereIn('product_cache_id', $allProductIds)->get();
+        $allVariants = DB::table('variants_cache')
+            ->whereIn('product_cache_id', $allProductIds)
+            ->whereNull('superseded_by_variant_cache_id')
+            ->get();
         $allInventory = DB::table('inventory_cache')->whereIn('variant_cache_id', $allVariants->pluck('id'))->get();
 
         $variantsByProduct = [];
@@ -539,7 +547,10 @@ Route::post('/products/{id}/image', function (Request $request, $id) {
             if (!empty($variantInput)) {
                 $variantInput['updated_at'] = now();
                 $variantInput['sync_pending'] = true;
-                DB::table('variants_cache')->where('id', $realId)->update($variantInput);
+                DB::table('variants_cache')
+                    ->where('id', $realId)
+                    ->whereNull('superseded_by_variant_cache_id')
+                    ->update($variantInput);
             }
         } else {
             $productInput = $request->only([
@@ -667,7 +678,10 @@ Route::post('/products/{id}/image', function (Request $request, $id) {
             if (!empty($variantInput)) {
                 $variantInput['updated_at'] = now();
                 $variantInput['sync_pending'] = true;
-                DB::table('variants_cache')->where('product_cache_id', $realId)->update($variantInput);
+                DB::table('variants_cache')
+                    ->where('product_cache_id', $realId)
+                    ->whereNull('superseded_by_variant_cache_id')
+                    ->update($variantInput);
             }
         }
 
@@ -692,6 +706,10 @@ Route::post('/products/{id}/image', function (Request $request, $id) {
         }
         $vendor = $request->input('vendor');
         $status = strtolower($request->input('status', 'ACTIVE'));
+        $description = $request->input('description', '');
+        $productType = $request->input('productType');
+        $productCategory = $request->input('category');
+        $template = $request->input('template');
         
         $tags = [];
         if ($request->filled('tags')) {
@@ -807,6 +825,10 @@ Route::post('/products/{id}/image', function (Request $request, $id) {
             'handle' => $handle,
             'vendor' => $vendor,
             'status' => $status,
+            'description' => $description,
+            'product_type' => $productType,
+            'product_category' => $productCategory,
+            'template' => $template,
             'tags' => json_encode($tags),
             'image_url' => $imageUrl,
             'images_data' => json_encode($imagesData),
@@ -825,9 +847,12 @@ Route::post('/products/{id}/image', function (Request $request, $id) {
         $compareAtPrice = $request->input('compareAtPrice');
         $barcode = $request->input('barcode');
         $weight = (float) $request->input('weight', 0);
+        $weightUnit = $request->input('weightUnit', 'kg');
         $costPerItem = $request->input('costPerItem');
         $hsCode = $request->input('hsCode');
         $origin = $request->input('countryOfOrigin');
+        $trackQuantity = filter_var($request->input('inventoryTracked', true), FILTER_VALIDATE_BOOLEAN);
+        $continueSelling = filter_var($request->input('continueSelling', false), FILTER_VALIDATE_BOOLEAN);
         
         DB::table('variants_cache')->insert([
             'product_cache_id' => $cacheId,
@@ -839,9 +864,12 @@ Route::post('/products/{id}/image', function (Request $request, $id) {
             'compare_at_price' => $compareAtPrice,
             'barcode' => $barcode,
             'weight' => $weight,
+            'weight_unit' => $weightUnit,
             'cost_per_item' => $costPerItem,
             'hs_code' => $hsCode,
             'origin' => $origin,
+            'track_quantity' => $trackQuantity ? 'true' : 'false',
+            'continue_selling' => $continueSelling ? 'true' : 'false',
             'updated_at' => now(),
             'created_at' => now(),
             'sync_pending' => true,
@@ -1196,54 +1224,145 @@ GRAPHQL;
         $session = clone $request->get('shopifySession');
         $shop = $session->getShop();
         $token = $session->getAccessToken();
-        $host = env('HOST');
-        
         $offset = (int) $request->input('offset', 0);
         $limit = 5; // process 5 at a time to be safe from rate limits
         
         $client = new \Shopify\Clients\Graphql($shop, $token);
-        $fetchProductVariantGids = function (string $productId) use ($client): ?array {
-            $variantGids = [];
-            $cursor = null;
-            $productFound = false;
-
-            do {
-                $page = $client->query([
-                    'query' => <<<'GRAPHQL'
-query ProductVariantIds($id: ID!, $cursor: String) {
+        $formatGraphqlErrors = function (array $errors): string {
+            return implode('; ', array_map(function ($error) {
+                $field = !empty($error['field']) ? implode('.', (array) $error['field']) . ': ' : '';
+                return $field . ($error['message'] ?? json_encode($error));
+            }, $errors));
+        };
+        $runQuery = function (string $query, array $variables, string $label) use ($client, $formatGraphqlErrors): array {
+            $body = $client->query(['query' => $query, 'variables' => $variables])->getDecodedBody();
+            if (!empty($body['errors'])) {
+                throw new \RuntimeException($label . ': ' . $formatGraphqlErrors($body['errors']));
+            }
+            if (empty($body['data'])) {
+                throw new \RuntimeException($label . ': Shopify returned no data.');
+            }
+            return $body['data'];
+        };
+        $runMutation = function (string $query, array $variables, string $payloadKey, string $label) use ($runQuery, $formatGraphqlErrors): array {
+            $data = $runQuery($query, $variables, $label);
+            $payload = $data[$payloadKey] ?? null;
+            if (!is_array($payload)) {
+                throw new \RuntimeException($label . ': Shopify returned no mutation payload.');
+            }
+            foreach (['userErrors', 'mediaUserErrors', 'mediaErrors'] as $errorKey) {
+                if (!empty($payload[$errorKey])) {
+                    throw new \RuntimeException($label . ': ' . $formatGraphqlErrors($payload[$errorKey]));
+                }
+            }
+            foreach ($payload['media'] ?? [] as $media) {
+                if (!empty($media['mediaErrors'])) {
+                    throw new \RuntimeException($label . ': ' . $formatGraphqlErrors($media['mediaErrors']));
+                }
+            }
+            return $payload;
+        };
+        $resolveProductCategory = function (string $storedCategory) use ($runQuery): ?string {
+            if (preg_match('/^gid:\/\/shopify\/TaxonomyCategory\/[A-Za-z0-9._-]+$/', $storedCategory)) {
+                return $storedCategory;
+            }
+            $data = $runQuery(
+                'query ProductTaxonomyCategoryByName($search: String!) { taxonomy { categories(first: 50, search: $search) { edges { node { id fullName isLeaf } } } } }',
+                ['search' => $storedCategory],
+                'Shopify product category lookup failed'
+            );
+            $matches = array_values(array_filter(
+                array_map(fn($edge) => $edge['node'] ?? [], $data['taxonomy']['categories']['edges'] ?? []),
+                fn($node) => !empty($node['isLeaf']) && ($node['fullName'] ?? '') === $storedCategory
+            ));
+            return count($matches) === 1 ? ($matches[0]['id'] ?? null) : null;
+        };
+        $fetchProductSyncState = function (string $productId) use ($runQuery): ?array {
+            $productQuery = <<<'GRAPHQL'
+query ProductSyncState($id: ID!, $variantCursor: String, $mediaCursor: String) {
   product(id: $id) {
     id
-    variants(first: 250, after: $cursor) {
+    options { id name optionValues { id name } }
+    variants(first: 250, after: $variantCursor) {
       pageInfo { hasNextPage endCursor }
-      nodes { id }
+      nodes {
+        id title sku selectedOptions { name value }
+        inventoryItem {
+          id
+          inventoryLevels(first: 250) {
+            nodes {
+              location { id }
+              quantities(names: ["available"]) { name quantity }
+            }
+          }
+        }
+      }
+    }
+    media(first: 250, after: $mediaCursor) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        id mediaContentType status mediaErrors { message }
+        ... on MediaImage { image { url } }
+      }
     }
   }
 }
-GRAPHQL,
-                    'variables' => ['id' => $productId, 'cursor' => $cursor],
-                ])->getDecodedBody();
-
-                if (!empty($page['errors'])) {
-                    throw new \RuntimeException('Shopify variant lookup failed: ' . ($page['errors'][0]['message'] ?? json_encode($page['errors'])));
-                }
-
-                $product = $page['data']['product'] ?? null;
-                if (!$product) {
+GRAPHQL;
+            $variantCursor = null;
+            $mediaCursor = null;
+            $product = null;
+            do {
+                $data = $runQuery($productQuery, [
+                    'id' => $productId,
+                    'variantCursor' => $variantCursor,
+                    'mediaCursor' => $mediaCursor,
+                ], 'Shopify product lookup failed');
+                $pageProduct = $data['product'] ?? null;
+                if (!$pageProduct) {
                     return null;
                 }
-                $productFound = true;
-                $variantConnection = $product['variants'] ?? [];
-                $variantGids = array_merge($variantGids, array_column($variantConnection['nodes'] ?? [], 'id'));
-                $pageInfo = $variantConnection['pageInfo'] ?? [];
-                $cursor = !empty($pageInfo['hasNextPage']) ? ($pageInfo['endCursor'] ?? null) : null;
-                if (!empty($pageInfo['hasNextPage']) && !$cursor) {
-                    throw new \RuntimeException('Shopify variant lookup returned an incomplete page cursor.');
+                if ($product === null) {
+                    $product = $pageProduct;
+                    $product['variants']['nodes'] = [];
+                    $product['media']['nodes'] = [];
                 }
-            } while ($cursor !== null);
+                    if ($variantCursor !== null || empty($product['variants']['nodes'])) {
+                        $product['variants']['nodes'] = array_merge(
+                            $product['variants']['nodes'],
+                            $pageProduct['variants']['nodes'] ?? []
+                        );
+                    }
+                    if ($mediaCursor !== null || empty($product['media']['nodes'])) {
+                        $product['media']['nodes'] = array_merge(
+                            $product['media']['nodes'],
+                            $pageProduct['media']['nodes'] ?? []
+                        );
+                    }
+                $variantPageInfo = $pageProduct['variants']['pageInfo'] ?? [];
+                $mediaPageInfo = $pageProduct['media']['pageInfo'] ?? [];
+                $variantCursor = !empty($variantPageInfo['hasNextPage']) ? ($variantPageInfo['endCursor'] ?? null) : null;
+                $mediaCursor = !empty($mediaPageInfo['hasNextPage']) ? ($mediaPageInfo['endCursor'] ?? null) : null;
+                if ((!empty($variantPageInfo['hasNextPage']) && !$variantCursor) ||
+                    (!empty($mediaPageInfo['hasNextPage']) && !$mediaCursor)) {
+                    throw new \RuntimeException('Shopify product lookup returned an incomplete pagination cursor.');
+                }
+            } while ($variantCursor !== null || $mediaCursor !== null);
 
-            return $productFound ? array_values(array_unique($variantGids)) : null;
+            return $product;
         };
         $syncMode = $request->input('syncMode');
+        $selectedProductIds = $request->input('selectedProductIds');
+        if ($selectedProductIds !== null && !is_array($selectedProductIds)) {
+            return response()->json(['message' => 'Selected product IDs must be an array.'], 422);
+        }
+        if (is_array($selectedProductIds)) {
+            $selectedProductIds = array_values(array_unique(array_filter(array_map(function ($id) {
+                return is_scalar($id) && ctype_digit((string) $id) ? (int) $id : null;
+            }, $selectedProductIds), fn($id) => $id !== null && $id > 0)));
+        }
+        if ($syncMode === null && !$request->boolean('sync_files') && empty($selectedProductIds)) {
+            return response()->json(['message' => 'Select at least one product to sync to Shopify.'], 422);
+        }
         
         $jobId = $request->input('jobId');
         if (!$jobId && $offset === 0) {
@@ -1268,7 +1387,6 @@ GRAPHQL,
                 'updated_at' => now(),
             ]);
         }
-        $selectedProductIds = $request->input('selectedProductIds');
         $query = DB::table('products_cache')->where('shop_domain', $shop)->orderBy('id');
         if (!empty($selectedProductIds)) {
             $query->whereIn('id', $selectedProductIds);
@@ -1289,25 +1407,606 @@ GRAPHQL,
             
         $pushed = 0;
         $batchErrors = [];
-        foreach ($products as $product) {
-            try {
-                $status = strtoupper($product->status) === 'ACTIVE' ? 'ACTIVE' : 'DRAFT';
-                $exists = false;
-                $productId = $product->product_gid;
-                $isLocal = str_starts_with($productId, 'local://');
-                $remoteVariantGids = [];
-                $createdOnShopify = false;
-                
-                if ($productId && !$isLocal) {
-                    try {
-                        $remoteVariantGids = $fetchProductVariantGids($productId);
-                        $exists = $remoteVariantGids !== null;
-                    } catch (\Throwable $exception) {
-                        $batchErrors[] = "{$product->title}: " . $exception->getMessage();
-                        $pushed++;
-                        continue;
+        $toBoolean = function ($value): bool {
+            return filter_var($value, FILTER_VALIDATE_BOOLEAN);
+        };
+        $makeVariantInput = function ($variant, bool $includeId, $product) use ($toBoolean, &$batchErrors): array {
+            $input = [];
+            if ($includeId) {
+                $input['id'] = $variant->variant_gid;
+            }
+            if ($variant->price !== null && $variant->price !== '') {
+                $input['price'] = $variant->price;
+            }
+            if ($variant->compare_at_price !== null && $variant->compare_at_price !== '') {
+                $input['compareAtPrice'] = $variant->compare_at_price;
+            }
+            if ($variant->barcode !== null) {
+                $input['barcode'] = $variant->barcode;
+            }
+            $weightMeasurement = null;
+            if ($variant->weight !== null && $variant->weight !== '') {
+                $weightUnits = [
+                    'g' => 'GRAMS',
+                    'kg' => 'KILOGRAMS',
+                    'lb' => 'POUNDS',
+                    'oz' => 'OUNCES',
+                ];
+                $unit = strtolower((string) ($variant->weight_unit ?? 'kg'));
+                if (!isset($weightUnits[$unit])) {
+                    $batchErrors[] = "{$product->title} variant {$variant->title}: Unsupported weight unit '{$unit}'.";
+                } else {
+                    $weightMeasurement = [
+                        'weight' => [
+                            'value' => (float) $variant->weight,
+                            'unit' => $weightUnits[$unit],
+                        ],
+                    ];
+                }
+            }
+
+            $inventoryItem = [];
+            if ($weightMeasurement) {
+                $inventoryItem['measurement'] = $weightMeasurement;
+            }
+            if ($variant->sku !== null) {
+                $inventoryItem['sku'] = $variant->sku;
+            }
+            if ($variant->cost_per_item !== null && $variant->cost_per_item !== '') {
+                $inventoryItem['cost'] = $variant->cost_per_item;
+            }
+            if ($variant->origin !== null && $variant->origin !== '') {
+                $inventoryItem['countryCodeOfOrigin'] = $variant->origin;
+            }
+            if ($variant->hs_code !== null && $variant->hs_code !== '') {
+                $inventoryItem['harmonizedSystemCode'] = $variant->hs_code;
+            }
+            if ($variant->track_quantity !== null) {
+                $inventoryItem['tracked'] = $toBoolean($variant->track_quantity);
+            }
+            if ($inventoryItem) {
+                $input['inventoryItem'] = $inventoryItem;
+            }
+            if ($variant->continue_selling !== null) {
+                $input['inventoryPolicy'] = $toBoolean($variant->continue_selling) ? 'CONTINUE' : 'DENY';
+            }
+            return $input;
+        };
+        $syncProductVariants = function ($product, string $productId, array $remoteState) use (
+            $runMutation,
+            $runQuery,
+            $fetchProductSyncState,
+            $makeVariantInput,
+            $toBoolean,
+            &$batchErrors
+        ): array {
+            $localVariants = DB::table('variants_cache')
+                ->where('product_cache_id', $product->id)
+                ->whereNull('superseded_by_variant_cache_id')
+                ->orderBy('id')
+                ->get();
+            $remoteVariants = $remoteState['variants']['nodes'] ?? [];
+            $remoteById = [];
+            foreach ($remoteVariants as $remoteVariant) {
+                $remoteById[$remoteVariant['id']] = $remoteVariant;
+            }
+
+            $remoteIds = array_keys($remoteById);
+            $remoteIdOwners = $remoteIds
+                ? DB::table('variants_cache')
+                    ->whereIn('variant_gid', $remoteIds)
+                    ->get(['id', 'variant_gid'])
+                    ->keyBy('variant_gid')
+                : collect();
+            $claimedRemoteIds = [];
+            foreach ($localVariants as $localVariant) {
+                $remoteVariant = $remoteById[$localVariant->variant_gid] ?? null;
+                $owner = $remoteIdOwners->get($localVariant->variant_gid);
+                if (!$remoteVariant) {
+                    continue;
+                }
+                if (($owner && (int) $owner->id !== (int) $localVariant->id) ||
+                    isset($claimedRemoteIds[$remoteVariant['id']])) {
+                    $batchErrors[] = "{$product->title} variant {$localVariant->title}: Shopify variant {$remoteVariant['id']} is already assigned to another local variant; it was not remapped.";
+                    continue;
+                }
+
+                $claimedRemoteIds[$remoteVariant['id']] = (int) $localVariant->id;
+                DB::table('variants_cache')->where('id', $localVariant->id)->where('product_cache_id', $product->id)->update([
+                    'inventory_item_gid' => $remoteVariant['inventoryItem']['id'] ?? null,
+                ]);
+            }
+
+            $blockedVariantIds = [];
+            if (count($localVariants) === 2 && count($remoteVariants) === 1) {
+                $mappedRows = $localVariants->filter(fn($variant) => isset($remoteById[$variant->variant_gid]))->values();
+                $staleRows = $localVariants->filter(fn($variant) => !isset($remoteById[$variant->variant_gid]))->values();
+                $remoteVariant = $remoteVariants[0];
+                $potentialMerge = count($mappedRows) === 1 && count($staleRows) === 1
+                    && $mappedRows[0]->variant_gid === $remoteVariant['id'];
+                $mergeErrorCount = count($batchErrors);
+                if ($potentialMerge) {
+                    $blockedVariantIds[(int) $staleRows[0]->id] = true;
+                }
+                $remoteTitleOption = collect($remoteVariant['selectedOptions'] ?? [])->firstWhere('name', 'Title');
+                $remotePriceIsZero = is_numeric($remoteVariant['price'] ?? null)
+                    && (float) $remoteVariant['price'] === 0.0;
+                $productHasDefaultTitleOption = count($remoteState['options'] ?? []) === 1
+                    && ($remoteState['options'][0]['name'] ?? '') === 'Title';
+
+                if ($potentialMerge &&
+                    $productHasDefaultTitleOption &&
+                    strcasecmp(trim((string) ($remoteVariant['title'] ?? '')), 'Default Title') === 0 &&
+                    ($remoteTitleOption['value'] ?? null) === 'Default Title' &&
+                    empty($remoteVariant['sku']) &&
+                    $remotePriceIsZero) {
+                    $canonical = $staleRows[0];
+                    $mirror = $mappedRows[0];
+                    $canonicalInventory = DB::table('inventory_cache')
+                        ->where('variant_cache_id', $canonical->id)
+                        ->get(['available']);
+                    $mirrorInventory = DB::table('inventory_cache')
+                        ->where('variant_cache_id', $mirror->id)
+                        ->get(['available']);
+                    $canonicalHasBusinessData = trim((string) $canonical->sku) !== ''
+                        && is_numeric($canonical->price)
+                        && (float) $canonical->price > 0
+                        && $canonicalInventory->contains(fn($row) => (int) $row->available !== 0);
+                    $mirrorHasOnlyDefaultData = trim((string) $mirror->title) === 'Default Title'
+                        && ($mirror->sku === null || trim((string) $mirror->sku) === '')
+                        && ($mirror->price === null || (float) $mirror->price === 0.0)
+                        && $mirror->compare_at_price === null
+                        && $mirror->barcode === null
+                        && ($mirror->weight === null || (float) $mirror->weight === 0.0)
+                        && $mirror->cost_per_item === null
+                        && $mirror->hs_code === null
+                        && $mirror->origin === null
+                        && ! $mirrorInventory->contains(fn($row) => (int) $row->available !== 0);
+                    $canonicalHasStaleShopifyId = preg_match(
+                        '#^gid://shopify/ProductVariant/[0-9]+$#',
+                        (string) $canonical->variant_gid
+                    ) === 1;
+
+                    if ($canonicalHasBusinessData && $mirrorHasOnlyDefaultData && $canonicalHasStaleShopifyId) {
+                        $ownershipData = $runQuery(
+                            'query VariantMappingOwnership($currentId: ID!, $staleId: ID!) { current: productVariant(id: $currentId) { id product { id } } stale: productVariant(id: $staleId) { id product { id } } }',
+                            [
+                                'currentId' => $remoteVariant['id'],
+                                'staleId' => $canonical->variant_gid,
+                            ],
+                            "{$product->title} Shopify variant ownership check"
+                        );
+                        $currentOwnership = $ownershipData['current'] ?? null;
+                        $staleOwnership = $ownershipData['stale'] ?? null;
+                        if (($currentOwnership['id'] ?? null) !== $remoteVariant['id'] ||
+                            ($currentOwnership['product']['id'] ?? null) !== $productId ||
+                            $staleOwnership !== null) {
+                            $batchErrors[] = "{$product->title}: Automatic variant merge skipped because Shopify ownership of the stale/current variant IDs could not be verified.";
+                        } else {
+                            $supersededVariantGid = $remoteVariant['id'];
+                            $supersededInventoryItemGid = $remoteVariant['inventoryItem']['id'] ?? null;
+                            $supersededRowGid = "local://superseded/variant/{$mirror->id}";
+                            DB::transaction(function () use (
+                                $product,
+                                $canonical,
+                                $mirror,
+                                $remoteVariant,
+                                $supersededRowGid,
+                                $supersededVariantGid,
+                                $supersededInventoryItemGid
+                            ) {
+                                $lockedRows = DB::table('variants_cache')
+                                    ->whereIn('id', [$canonical->id, $mirror->id])
+                                    ->orderBy('id')
+                                    ->lockForUpdate()
+                                    ->get()
+                                    ->keyBy('id');
+                                $lockedCanonical = $lockedRows->get($canonical->id);
+                                $lockedMirror = $lockedRows->get($mirror->id);
+                                if (!$lockedCanonical || !$lockedMirror ||
+                                    (int) $lockedCanonical->product_cache_id !== (int) $product->id ||
+                                    (int) $lockedMirror->product_cache_id !== (int) $product->id ||
+                                    $lockedCanonical->superseded_by_variant_cache_id !== null ||
+                                    $lockedMirror->superseded_by_variant_cache_id !== null ||
+                                    $lockedCanonical->variant_gid !== $canonical->variant_gid ||
+                                    $lockedMirror->variant_gid !== $remoteVariant['id'] ||
+                                    trim((string) $lockedCanonical->sku) === '' ||
+                                    !is_numeric($lockedCanonical->price) ||
+                                    (float) $lockedCanonical->price <= 0 ||
+                                    trim((string) $lockedMirror->title) !== 'Default Title' ||
+                                    ($lockedMirror->sku !== null && trim((string) $lockedMirror->sku) !== '') ||
+                                    ($lockedMirror->price !== null && (float) $lockedMirror->price !== 0.0) ||
+                                    $lockedMirror->compare_at_price !== null ||
+                                    $lockedMirror->barcode !== null ||
+                                    ($lockedMirror->weight !== null && (float) $lockedMirror->weight !== 0.0) ||
+                                    $lockedMirror->cost_per_item !== null ||
+                                    $lockedMirror->hs_code !== null ||
+                                    $lockedMirror->origin !== null ||
+                                    ($lockedMirror->track_quantity !== null && filter_var($lockedMirror->track_quantity, FILTER_VALIDATE_BOOLEAN)) ||
+                                    ($lockedMirror->continue_selling !== null && filter_var($lockedMirror->continue_selling, FILTER_VALIDATE_BOOLEAN))) {
+                                    throw new \RuntimeException("{$product->title}: Variant rows changed; automatic merge was cancelled.");
+                                }
+
+                                $canonicalInventory = DB::table('inventory_cache')
+                                    ->where('variant_cache_id', $canonical->id)
+                                    ->lockForUpdate()
+                                    ->get(['available']);
+                                $mirrorInventory = DB::table('inventory_cache')
+                                    ->where('variant_cache_id', $mirror->id)
+                                    ->lockForUpdate()
+                                    ->get(['available']);
+                                if (!$canonicalInventory->contains(fn($row) => (int) $row->available !== 0) ||
+                                    $mirrorInventory->contains(fn($row) => (int) $row->available !== 0)) {
+                                    throw new \RuntimeException("{$product->title}: Inventory evidence changed; automatic merge was cancelled.");
+                                }
+
+                                $existingOwnerId = DB::table('variants_cache')
+                                    ->where('variant_gid', $remoteVariant['id'])
+                                    ->value('id');
+                                if ((int) $existingOwnerId !== (int) $mirror->id ||
+                                    DB::table('variants_cache')->where('variant_gid', $supersededRowGid)->exists()) {
+                                    throw new \RuntimeException("{$product->title}: Shopify variant mapping is no longer unique; automatic merge was cancelled.");
+                                }
+
+                                $superseded = DB::table('variants_cache')
+                                    ->where('id', $mirror->id)
+                                    ->where('product_cache_id', $product->id)
+                                    ->where('variant_gid', $remoteVariant['id'])
+                                    ->whereNull('superseded_by_variant_cache_id')
+                                    ->update([
+                                        'variant_gid' => $supersededRowGid,
+                                        'inventory_item_gid' => null,
+                                        'superseded_by_variant_cache_id' => $canonical->id,
+                                        'superseded_variant_gid' => $supersededVariantGid,
+                                        'superseded_inventory_item_gid' => $supersededInventoryItemGid,
+                                        'sync_pending' => false,
+                                        'updated_at' => now(),
+                                    ]);
+                                if ($superseded !== 1) {
+                                    throw new \RuntimeException("{$product->title}: Mirror row changed during merge; no variant mapping was transferred.");
+                                }
+
+                                try {
+                                    $promoted = DB::table('variants_cache')
+                                        ->where('id', $canonical->id)
+                                        ->where('product_cache_id', $product->id)
+                                        ->where('variant_gid', $canonical->variant_gid)
+                                        ->whereNull('superseded_by_variant_cache_id')
+                                        ->update([
+                                            'variant_gid' => $remoteVariant['id'],
+                                            'inventory_item_gid' => $remoteVariant['inventoryItem']['id'] ?? null,
+                                            'sync_pending' => true,
+                                            'updated_at' => now(),
+                                        ]);
+                                } catch (\Illuminate\Database\QueryException $exception) {
+                                    $isDuplicateKey = ($exception->errorInfo[0] ?? null) === '23000'
+                                        && (int) ($exception->errorInfo[1] ?? 0) === 1062;
+                                    if (!$isDuplicateKey) {
+                                        throw $exception;
+                                    }
+                                    throw new \RuntimeException("{$product->title}: Shopify variant mapping became occupied during merge; transaction rolled back.", 0, $exception);
+                                }
+                                if ($promoted !== 1) {
+                                    throw new \RuntimeException("{$product->title}: Canonical row changed during merge; transaction rolled back.");
+                                }
+                            });
+
+                            $claimedRemoteIds[$remoteVariant['id']] = (int) $canonical->id;
+                            $remoteIdOwners->put($remoteVariant['id'], (object) ['id' => $canonical->id]);
+                            $localVariants = DB::table('variants_cache')
+                                ->where('product_cache_id', $product->id)
+                                ->whereNull('superseded_by_variant_cache_id')
+                                ->orderBy('id')
+                                ->get();
+                        }
                     }
                 }
+                if ($potentialMerge && count($batchErrors) === $mergeErrorCount &&
+                    isset($blockedVariantIds[(int) $staleRows[0]->id])) {
+                    $batchErrors[] = "{$product->title}: Stale and current variant rows did not meet the strong merge evidence requirements; no mapping or Shopify variant was changed.";
+                }
+            }
+
+            $saveVariantMapping = function ($localVariant, array $remoteVariant) use (
+                $product,
+                &$remoteIdOwners,
+                &$claimedRemoteIds,
+                &$batchErrors
+            ): bool {
+                $remoteId = $remoteVariant['id'];
+                $ownerId = DB::table('variants_cache')
+                    ->where('variant_gid', $remoteId)
+                    ->value('id');
+                if ($ownerId !== null && (int) $ownerId !== (int) $localVariant->id) {
+                    $batchErrors[] = "{$product->title} variant {$localVariant->title}: Shopify variant {$remoteId} is already assigned to local variant {$ownerId}; it was not remapped.";
+                    return false;
+                }
+                if (isset($claimedRemoteIds[$remoteId]) &&
+                    (int) $claimedRemoteIds[$remoteId] !== (int) $localVariant->id) {
+                    $batchErrors[] = "{$product->title} variant {$localVariant->title}: Shopify variant {$remoteId} is already claimed by another local variant; it was not remapped.";
+                    return false;
+                }
+
+                try {
+                    $updated = DB::table('variants_cache')
+                        ->where('id', $localVariant->id)
+                        ->where('product_cache_id', $product->id)
+                        ->where('variant_gid', $localVariant->variant_gid)
+                        ->update([
+                            'variant_gid' => $remoteId,
+                            'inventory_item_gid' => $remoteVariant['inventoryItem']['id'] ?? null,
+                        ]);
+                } catch (\Illuminate\Database\QueryException $exception) {
+                    $isDuplicateKey = ($exception->errorInfo[0] ?? null) === '23000'
+                        && (int) ($exception->errorInfo[1] ?? 0) === 1062;
+                    if (!$isDuplicateKey) {
+                        throw $exception;
+                    }
+                    $batchErrors[] = "{$product->title} variant {$localVariant->title}: Shopify variant {$remoteId} became assigned to another local variant before its mapping could be saved.";
+                    return false;
+                }
+                if ($updated !== 1) {
+                    $batchErrors[] = "{$product->title} variant {$localVariant->title}: Its local mapping changed during reconciliation; Shopify variant {$remoteId} was not assigned.";
+                    return false;
+                }
+
+                $claimedRemoteIds[$remoteId] = (int) $localVariant->id;
+                $remoteIdOwners->put($remoteId, (object) ['id' => $localVariant->id]);
+                return true;
+            };
+
+            foreach ($localVariants as $localVariant) {
+                if (isset($claimedRemoteIds[$localVariant->variant_gid]) &&
+                    (int) $claimedRemoteIds[$localVariant->variant_gid] === (int) $localVariant->id) {
+                    continue;
+                }
+
+                $availableRemoteVariants = array_values(array_filter($remoteVariants, function ($candidate) use (
+                    $claimedRemoteIds,
+                    $remoteIdOwners,
+                    $localVariant
+                ) {
+                    $owner = $remoteIdOwners->get($candidate['id']);
+                    return !isset($claimedRemoteIds[$candidate['id']])
+                        && (!$owner || (int) $owner->id === (int) $localVariant->id);
+                }));
+                $matches = [];
+                if ($localVariant->sku !== null && trim((string) $localVariant->sku) !== '') {
+                    $matches = array_values(array_filter($availableRemoteVariants, fn($candidate) =>
+                        ($candidate['sku'] ?? null) === $localVariant->sku
+                    ));
+                }
+
+                if (count($matches) !== 1) {
+                    $localTitle = trim((string) $localVariant->title);
+                    if ($localTitle !== '' && strcasecmp($localTitle, 'Default Title') !== 0) {
+                        $matches = array_values(array_filter($availableRemoteVariants, fn($candidate) =>
+                            trim((string) ($candidate['title'] ?? '')) === $localTitle
+                            && strcasecmp(trim((string) ($candidate['title'] ?? '')), 'Default Title') !== 0
+                        ));
+                    } else {
+                        $matches = [];
+                    }
+                }
+
+                if (count($matches) === 1) {
+                    $saveVariantMapping($localVariant, $matches[0]);
+                }
+            }
+
+            $localVariants = DB::table('variants_cache')
+                ->where('product_cache_id', $product->id)
+                ->whereNull('superseded_by_variant_cache_id')
+                ->orderBy('id')
+                ->get();
+            $unmappedVariants = $localVariants->filter(function ($variant) use ($remoteById) {
+                return empty($remoteById[$variant->variant_gid] ?? null);
+            })->values();
+            $createInputs = [];
+            $createLocalByKey = [];
+            $preCreateRemoteIds = array_fill_keys(array_keys($remoteById), true);
+            $productOptions = $remoteState['options'] ?? [];
+            $isDefaultTitleOption = count($productOptions) === 1 && ($productOptions[0]['name'] ?? '') === 'Title';
+
+            foreach ($unmappedVariants as $variant) {
+                if (isset($blockedVariantIds[(int) $variant->id])) {
+                    continue;
+                }
+                if (!$isDefaultTitleOption) {
+                    $batchErrors[] = "{$product->title} variant {$variant->title}: Shopify variant options cannot be created because option names and values are not stored in the local cache.";
+                    continue;
+                }
+                $value = trim((string) $variant->title);
+                if ($value === '' || strcasecmp($value, 'Default Title') === 0) {
+                    $batchErrors[] = "{$product->title} variant {$variant->title}: Cannot safely identify or create a distinct Shopify variant from the cached Default Title.";
+                    continue;
+                }
+                $optionKey = strtolower($value);
+                if (isset($createLocalByKey[$optionKey])) {
+                    $batchErrors[] = "{$product->title} variant {$variant->title}: Duplicate cached variant title cannot map to a unique Shopify variant.";
+                    continue;
+                }
+                $createInput = $makeVariantInput($variant, false, $product);
+                unset($createInput['id']);
+                $createInput['optionValues'] = [[
+                    'optionName' => 'Title',
+                    'name' => $value,
+                ]];
+                $createInputs[] = $createInput;
+                $createLocalByKey[$optionKey] = $variant->id;
+            }
+
+            if ($createInputs) {
+                try {
+                    $runMutation(
+                        'mutation productVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) { productVariantsBulkCreate(productId: $productId, variants: $variants, strategy: PRESERVE_STANDALONE_VARIANT) { productVariants { id title selectedOptions { name value } inventoryItem { id } } userErrors { field message } } }',
+                        ['productId' => $productId, 'variants' => $createInputs],
+                        'productVariantsBulkCreate',
+                        "{$product->title} variant creation"
+                    );
+                } catch (\Throwable $exception) {
+                    $batchErrors[] = $exception->getMessage();
+                }
+
+                $remoteState = $fetchProductSyncState($productId);
+                if ($remoteState === null) {
+                    throw new \RuntimeException("{$product->title}: Shopify variants could not be verified after variant creation.");
+                }
+                $remoteVariants = $remoteState['variants']['nodes'] ?? [];
+                $remoteById = [];
+                foreach ($remoteVariants as $remoteVariant) {
+                    $remoteById[$remoteVariant['id']] = $remoteVariant;
+                }
+                foreach ($remoteVariants as $remoteVariant) {
+                    if (isset($preCreateRemoteIds[$remoteVariant['id']])) {
+                        continue;
+                    }
+                    $title = trim((string) (collect($remoteVariant['selectedOptions'] ?? [])->firstWhere('name', 'Title')['value'] ?? ''));
+                    $localId = $createLocalByKey[strtolower($title)] ?? null;
+                    if (!$localId) {
+                        continue;
+                    }
+                    $localVariant = $localVariants->firstWhere('id', $localId);
+                    if ($localVariant) {
+                        $saveVariantMapping($localVariant, $remoteVariant);
+                    }
+                }
+            }
+
+            $localVariants = DB::table('variants_cache')
+                ->where('product_cache_id', $product->id)
+                ->whereNull('superseded_by_variant_cache_id')
+                ->orderBy('id')
+                ->get();
+            $remoteVariantIds = array_keys($remoteById);
+            $updates = [];
+            $mappedVariants = [];
+            $claimedRemoteIds = [];
+            foreach ($localVariants as $variant) {
+                $remoteVariant = $remoteById[$variant->variant_gid] ?? null;
+                $mappedOwner = $remoteIdOwners->get($variant->variant_gid);
+                if (!$remoteVariant ||
+                    (isset($claimedRemoteIds[$remoteVariant['id']]) && (int) $claimedRemoteIds[$remoteVariant['id']] !== (int) $variant->id) ||
+                    ($mappedOwner && (int) $mappedOwner->id !== (int) $variant->id)) {
+                    $batchErrors[] = "{$product->title} variant {$variant->title}: No valid Shopify variant ID could be mapped; it was not sent.";
+                    continue;
+                }
+                $claimedRemoteIds[$remoteVariant['id']] = (int) $variant->id;
+                DB::table('variants_cache')->where('id', $variant->id)->where('product_cache_id', $product->id)->update([
+                    'inventory_item_gid' => $remoteVariant['inventoryItem']['id'] ?? null,
+                ]);
+                $updates[] = $makeVariantInput($variant, true, $product);
+                $mappedVariants[] = $variant;
+            }
+
+            if ($updates) {
+                try {
+                    $runMutation(
+                        'mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) { productVariantsBulkUpdate(productId: $productId, variants: $variants) { productVariants { id } userErrors { field message } } }',
+                        ['productId' => $productId, 'variants' => $updates],
+                        'productVariantsBulkUpdate',
+                        "{$product->title} variant update"
+                    );
+                } catch (\Throwable $exception) {
+                    $batchErrors[] = $exception->getMessage();
+                }
+            }
+
+            $quantityInputs = [];
+            foreach ($mappedVariants as $variant) {
+                $remoteVariant = $remoteById[$variant->variant_gid] ?? null;
+                if (!$remoteVariant || empty($remoteVariant['inventoryItem']['id'])) {
+                    continue;
+                }
+                $inventoryRows = DB::table('inventory_cache')->where('variant_cache_id', $variant->id)->get();
+                if ($inventoryRows->isEmpty()) {
+                    continue;
+                }
+                $tracked = $variant->track_quantity !== null
+                    ? $toBoolean($variant->track_quantity)
+                    : true;
+                if (!$tracked) {
+                    $batchErrors[] = "{$product->title} variant {$variant->title}: Cached inventory quantities were not sent because inventory tracking is disabled.";
+                    continue;
+                }
+
+                $activeLocations = collect($remoteVariant['inventoryItem']['inventoryLevels']['nodes'] ?? [])
+                    ->pluck('location.id')
+                    ->all();
+                foreach ($inventoryRows as $inventoryRow) {
+                    if (!$inventoryRow->location_gid) {
+                        $batchErrors[] = "{$product->title} variant {$variant->title}: Inventory row {$inventoryRow->id} has no Shopify location ID.";
+                        continue;
+                    }
+                    $compareQuantity = null;
+                    foreach ($remoteVariant['inventoryItem']['inventoryLevels']['nodes'] ?? [] as $inventoryLevel) {
+                        if (($inventoryLevel['location']['id'] ?? null) === $inventoryRow->location_gid) {
+                            $availableQuantity = collect($inventoryLevel['quantities'] ?? [])
+                                ->firstWhere('name', 'available')['quantity'] ?? null;
+                            if (is_numeric($availableQuantity)) {
+                                $compareQuantity = (int) $availableQuantity;
+                            }
+                            break;
+                        }
+                    }
+                    if (!in_array($inventoryRow->location_gid, $activeLocations, true)) {
+                        try {
+                            $runMutation(
+                                'mutation inventoryActivate($inventoryItemId: ID!, $locationId: ID!) { inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId) { inventoryLevel { id } userErrors { field message } } }',
+                                [
+                                    'inventoryItemId' => $remoteVariant['inventoryItem']['id'],
+                                    'locationId' => $inventoryRow->location_gid,
+                                ],
+                                'inventoryActivate',
+                                "{$product->title} variant {$variant->title} inventory activation"
+                            );
+                        } catch (\Throwable $exception) {
+                            $batchErrors[] = $exception->getMessage();
+                            continue;
+                        }
+                        $compareQuantity = 0;
+                    }
+                    if ($compareQuantity === null) {
+                        $batchErrors[] = "{$product->title} variant {$variant->title}: Shopify did not return the current available quantity for location {$inventoryRow->location_gid}; no quantity was sent.";
+                        continue;
+                    }
+                    $quantityInputs[] = [
+                        'inventoryItemId' => $remoteVariant['inventoryItem']['id'],
+                        'locationId' => $inventoryRow->location_gid,
+                        'quantity' => (int) $inventoryRow->available,
+                        'compareQuantity' => $compareQuantity,
+                    ];
+                }
+            }
+
+            foreach (array_chunk($quantityInputs, 250) as $quantityChunk) {
+                try {
+                    $runMutation(
+                        'mutation inventorySetQuantities($input: InventorySetQuantitiesInput!) { inventorySetQuantities(input: $input) { userErrors { field message } } }',
+                        [
+                            'input' => [
+                                'name' => 'available',
+                                'reason' => 'correction',
+                                'quantities' => $quantityChunk,
+                            ],
+                        ],
+                        'inventorySetQuantities',
+                        "{$product->title} inventory quantity update"
+                    );
+                } catch (\Throwable $exception) {
+                    $batchErrors[] = $exception->getMessage();
+                }
+            }
+
+            return [$remoteState, $remoteVariantIds];
+        };
+        foreach ($products as $product) {
+            $productErrorCount = count($batchErrors);
+            try {
+                $productId = $product->product_gid;
+                $isLocal = !$productId || str_starts_with($productId, 'local://');
+                $remoteState = (!$isLocal) ? $fetchProductSyncState($productId) : null;
+                $exists = $remoteState !== null;
                 
                 if ($syncMode === 'seo') {
                     $productInput = [
@@ -1320,28 +2019,38 @@ GRAPHQL,
                     $productInput = [
                         'title' => $product->title,
                         'vendor' => $product->vendor,
-                        'status' => $status,
                         'tags' => json_decode($product->tags, true) ?? [],
                         'descriptionHtml' => $product->description ?? '',
                         'productType' => $product->product_type ?? '',
-                        'templateSuffix' => $product->template ?? '',
+                        'templateSuffix' => in_array(strtolower((string) ($product->template ?? '')), ['', 'default product', 'product'], true)
+                            ? null
+                            : $product->template,
                         'seo' => [
                             'title' => $product->meta_title ?? '',
                             'description' => $product->meta_description ?? ''
                         ]
                     ];
 
+                    $storedStatus = strtoupper((string) $product->status);
+                    if (in_array($storedStatus, ['ACTIVE', 'DRAFT', 'ARCHIVED'], true)) {
+                        $productInput['status'] = $storedStatus;
+                    } else {
+                        $batchErrors[] = "{$product->title} status: Unsupported cached status '{$product->status}'.";
+                    }
+
                     $storedCategory = trim((string) ($product->product_category ?? ''));
-                    if (preg_match('/^gid:\/\/shopify\/TaxonomyCategory\/[A-Za-z0-9._-]+$/', $storedCategory)) {
-                        $productInput['category'] = $storedCategory;
+                    if ($storedCategory !== '' && $storedCategory !== '—') {
+                        $categoryId = $resolveProductCategory($storedCategory);
+                        if ($categoryId) {
+                            $productInput['category'] = $categoryId;
+                        } else {
+                            $batchErrors[] = "{$product->title} product category: Shopify could not resolve the cached category '{$storedCategory}' to a unique taxonomy category.";
+                        }
                     }
                     
                     $syncHandle = $product->handle ?? '';
-                    $syncHandle = str_replace('products/', '', $syncHandle);
+                    $syncHandle = preg_replace('#^products/#', '', $syncHandle);
                     $syncHandle = trim($syncHandle, '/');
-                    if (empty($syncHandle)) {
-                        $syncHandle = \Illuminate\Support\Str::slug($product->title);
-                    }
                     if (!empty($syncHandle)) {
                         $productInput['handle'] = $syncHandle;
                     }
@@ -1349,361 +2058,300 @@ GRAPHQL,
                 
                 if ($exists) {
                     $productInput['id'] = $productId;
-                    $updateResponse = $client->query([
-                        'query' => 'mutation productUpdate($input: ProductInput!) { productUpdate(input: $input) { product { id } userErrors { field message } } }',
-                        'variables' => ['input' => $productInput]
-                    ])->getDecodedBody();
-                    $updateErrors = $updateResponse['data']['productUpdate']['userErrors'] ?? [];
-                    if (isset($updateResponse['errors'])) {
-                        $updateErrors = array_merge($updateErrors, $updateResponse['errors']);
-                    }
-                    if (!empty($updateErrors)) {
-                        $batchErrors[] = "{$product->title}: " . ($updateErrors[0]['message'] ?? 'Shopify product update failed.');
-                        $pushed++;
-                        continue;
+                    $updatePayload = $runMutation(
+                        'mutation productUpdate($product: ProductUpdateInput!) { productUpdate(product: $product) { product { id } userErrors { field message } } }',
+                        ['product' => $productInput],
+                        'productUpdate',
+                        "{$product->title} product update"
+                    );
+                    if (empty($updatePayload['product']['id'])) {
+                        throw new \RuntimeException("{$product->title}: Shopify did not return the updated product.");
                     }
                 } else {
-                    $response = $client->query([
-                        'query' => 'mutation productCreate($input: ProductInput!) { productCreate(input: $input) { product { id variants(first:1) { nodes { id title sku inventoryItem { id } } } } userErrors { field message } } }',
-                        'variables' => ['input' => $productInput]
-                    ])->getDecodedBody();
-                    
-                    $createErrors = $response['data']['productCreate']['userErrors'] ?? [];
-                    if (isset($response['errors'])) {
-                        $createErrors = array_merge($createErrors, $response['errors']);
+                    $createPayload = $runMutation(
+                        'mutation productCreate($product: ProductCreateInput!) { productCreate(product: $product) { product { id } userErrors { field message } } }',
+                        ['product' => $productInput],
+                        'productCreate',
+                        "{$product->title} product creation"
+                    );
+                    $productId = $createPayload['product']['id'] ?? null;
+                    if (!$productId) {
+                        throw new \RuntimeException("{$product->title}: Shopify did not return the created product.");
                     }
-                    if (!empty($createErrors)) {
-                        $batchErrors[] = "{$product->title}: " . ($createErrors[0]['message'] ?? 'Shopify product creation failed.');
-                        $pushed++;
-                        continue;
-                    }
-
-                    $productId = $response['data']['productCreate']['product']['id'] ?? null;
-                    if ($productId) {
-                        $createdOnShopify = true;
-                        DB::table('products_cache')->where('id', $product->id)->update(['product_gid' => $productId]);
-                        DB::table('variants_cache')
-                            ->where('product_cache_id', $product->id)
-                            ->where('variant_gid', 'not like', 'local://%')
-                            ->delete();
-
-                        $defaultVariant = $response['data']['productCreate']['product']['variants']['nodes'][0] ?? null;
-                        if ($defaultVariant) {
-                            $localVariants = DB::table('variants_cache')
-                                ->where('product_cache_id', $product->id)
-                                ->where('variant_gid', 'like', 'local://ProductVariant/%')
-                                ->orderBy('id')
-                                ->get();
-                            $defaultCacheVariant = $localVariants->first(function ($variant) use ($defaultVariant) {
-                                return !empty($defaultVariant['sku']) && $variant->sku === $defaultVariant['sku'];
-                            });
-                            if (!$defaultCacheVariant) {
-                                $defaultTitle = $defaultVariant['title'] ?? 'Default Title';
-                                $defaultCacheVariant = $localVariants->first(function ($variant) use ($defaultTitle) {
-                                    return ($variant->title ?? 'Default Title') === $defaultTitle;
-                                }) ?? $localVariants->first();
-                            }
-
-                            if ($defaultCacheVariant) {
-                                DB::table('variants_cache')->where('id', $defaultCacheVariant->id)->update([
-                                    'variant_gid' => $defaultVariant['id'],
-                                    'inventory_item_gid' => $defaultVariant['inventoryItem']['id'] ?? null,
-                                ]);
-                            }
-
-                            $additionalLocalVariants = $localVariants
-                                ->filter(fn($variant) => !$defaultCacheVariant || $variant->id !== $defaultCacheVariant->id)
-                                ->values();
-                            if (!$defaultCacheVariant && $localVariants->isNotEmpty()) {
-                                $batchErrors[] = "{$product->title}: Shopify created a default variant, but no local variant could be mapped to it.";
-                            }
-                            if ($additionalLocalVariants->isNotEmpty()) {
-                                $titles = $additionalLocalVariants->map(fn($variant) => trim((string) $variant->title))->all();
-                                $normalizedTitles = array_map('strtolower', $titles);
-                                $allTitles = array_merge(
-                                    [strtolower(trim((string) ($defaultVariant['title'] ?? 'Default Title')))],
-                                    $normalizedTitles
-                                );
-                                if (in_array('', $titles, true) || count($allTitles) !== count(array_unique($allTitles))) {
-                                    $batchErrors[] = "{$product->title}: Local variants need distinct, non-empty titles to create Shopify variants.";
-                                } else {
-                                    $variantsToCreate = $additionalLocalVariants->map(function ($variant) {
-                                        return [
-                                            'optionValues' => [[
-                                                'optionName' => 'Title',
-                                                'name' => trim((string) $variant->title),
-                                            ]],
-                                        ];
-                                    })->all();
-                                    try {
-                                        $createVariantsResponse = $client->query([
-                                            'query' => 'mutation productVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) { productVariantsBulkCreate(productId: $productId, variants: $variants, strategy: PRESERVE_STANDALONE_VARIANT) { productVariants { id title selectedOptions { name value } inventoryItem { id } } userErrors { field message } } }',
-                                            'variables' => [
-                                                'productId' => $productId,
-                                                'variants' => $variantsToCreate,
-                                            ],
-                                        ])->getDecodedBody();
-                                    } catch (\Throwable $exception) {
-                                        $createVariantsResponse = ['errors' => [['message' => $exception->getMessage()]]];
-                                    }
-
-                                    $variantCreateErrors = $createVariantsResponse['data']['productVariantsBulkCreate']['userErrors'] ?? [];
-                                    if (!empty($createVariantsResponse['errors'])) {
-                                        $variantCreateErrors = array_merge($variantCreateErrors, $createVariantsResponse['errors']);
-                                    }
-                                    $mappedAdditionalVariantIds = [];
-                                    foreach ($createVariantsResponse['data']['productVariantsBulkCreate']['productVariants'] ?? [] as $createdVariant) {
-                                        $createdTitle = collect($createdVariant['selectedOptions'] ?? [])
-                                            ->firstWhere('name', 'Title')['value'] ?? null;
-                                        $matchingLocalVariant = $additionalLocalVariants->first(
-                                            fn($variant) => $createdTitle !== null && trim((string) $variant->title) === $createdTitle
-                                        );
-                                        if ($matchingLocalVariant) {
-                                            DB::table('variants_cache')->where('id', $matchingLocalVariant->id)->update([
-                                                'variant_gid' => $createdVariant['id'],
-                                                'inventory_item_gid' => $createdVariant['inventoryItem']['id'] ?? null,
-                                            ]);
-                                            $mappedAdditionalVariantIds[] = $matchingLocalVariant->id;
-                                        }
-                                    }
-                                    if (!empty($variantCreateErrors)) {
-                                        $batchErrors[] = "{$product->title} additional variants: " . ($variantCreateErrors[0]['message'] ?? 'Shopify variant creation failed.');
-                                    } elseif (count($mappedAdditionalVariantIds) !== $additionalLocalVariants->count()) {
-                                        $batchErrors[] = "{$product->title}: Shopify did not return a matching ID for every newly created variant.";
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    DB::table('products_cache')->where('id', $product->id)->where('shop_domain', $shop)->update([
+                        'product_gid' => $productId,
+                    ]);
+                    $remoteState = $fetchProductSyncState($productId);
                 }
-                
+
                 if (!$productId) {
-                    $errs = $response['data']['productCreate']['userErrors'] ?? [];
-                    if (!empty($errs)) {
-                        $batchErrors[] = "{$product->title}: " . $errs[0]['message'];
-                    } else {
-                        $batchErrors[] = "{$product->title}: Failed to create product.";
-                    }
-                    $pushed++;
-                    continue;
+                    throw new \RuntimeException("{$product->title}: Shopify product ID is missing after sync.");
                 }
 
                 if ($syncMode !== 'seo') {
-                    if ($createdOnShopify) {
-                        try {
-                            $remoteVariantGids = $fetchProductVariantGids($productId);
-                        } catch (\Throwable $exception) {
-                            $batchErrors[] = "{$product->title}: " . $exception->getMessage();
-                            $pushed++;
-                            continue;
-                        }
-                        if ($remoteVariantGids === null) {
-                            $batchErrors[] = "{$product->title}: Shopify product was created but its variants could not be verified.";
-                            $pushed++;
-                            continue;
-                        }
+                    if ($remoteState === null) {
+                        throw new \RuntimeException("{$product->title}: Shopify product was created or updated but its variants could not be verified.");
                     }
 
-                    $staleShopifyVariants = DB::table('variants_cache')
-                        ->where('product_cache_id', $product->id)
-                        ->where('variant_gid', 'not like', 'local://%');
-                    if (!empty($remoteVariantGids)) {
-                        $staleShopifyVariants->whereNotIn('variant_gid', $remoteVariantGids);
-                    }
-                    $staleShopifyVariants->delete();
-
-                    $variants = DB::table('variants_cache')->where('product_cache_id', $product->id)->get();
-                    $variantsInput = [];
-                    
-                    foreach ($variants as $variant) {
-                        if ($variant->variant_gid && in_array($variant->variant_gid, $remoteVariantGids, true)) {
-                            $vInput = [ 'id' => $variant->variant_gid ];
-                            if ($variant->price !== null) $vInput['price'] = $variant->price;
-                            if (isset($variant->compare_at_price) && $variant->compare_at_price !== null) $vInput['compareAtPrice'] = $variant->compare_at_price;
-                            if (isset($variant->barcode) && $variant->barcode !== null) $vInput['barcode'] = $variant->barcode;
-                            if (isset($variant->weight) && $variant->weight !== null && (float)$variant->weight > 0) {
-                                $vInput['weight'] = (float)$variant->weight;
-                                $vInput['weightUnit'] = 'KILOGRAMS';
-                            }
-                            
-                            $invInput = [];
-                            if ($variant->sku !== null) $invInput['sku'] = $variant->sku;
-                            if (isset($variant->cost_per_item) && $variant->cost_per_item !== null) $invInput['cost'] = $variant->cost_per_item;
-                            if (isset($variant->origin) && $variant->origin !== null) $invInput['countryCodeOfOrigin'] = $variant->origin;
-                            if (isset($variant->hs_code) && $variant->hs_code !== null) $invInput['harmonizedSystemCode'] = $variant->hs_code;
-                            
-                            if (isset($variant->track_quantity) && $variant->track_quantity !== null) {
-                                $invInput['tracked'] = (strtolower((string)$variant->track_quantity) === 'true' || $variant->track_quantity === '1' || $variant->track_quantity === true);
-                            }
-                            if (!empty($invInput)) {
-                                $vInput['inventoryItem'] = $invInput;
-                            }
-                            
-                            if (isset($variant->charge_taxes) && $variant->charge_taxes !== null) {
-                                $vInput['taxable'] = (strtolower((string)$variant->charge_taxes) === 'true' || $variant->charge_taxes === '1' || $variant->charge_taxes === true);
-                            }
-                            
-                            if (isset($variant->continue_selling) && $variant->continue_selling !== null) {
-                                $vInput['inventoryPolicy'] = (strtolower((string)$variant->continue_selling) === 'true' || $variant->continue_selling === '1' || $variant->continue_selling === true) ? 'CONTINUE' : 'DENY';
-                            }
-                            
-                            $variantsInput[] = $vInput;
-                        }
-                    }
-                    
-                    $variantUpdateFailed = false;
-                    if (!empty($variantsInput)) {
-                        $vResponse = $client->query([
-                            'query' => 'mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) { productVariantsBulkUpdate(productId: $productId, variants: $variants) { userErrors { field message } } }',
-                            'variables' => [
-                                'productId' => $productId,
-                                'variants' => $variantsInput
-                            ]
-                        ])->getDecodedBody();
-                        
-                        $vErrs = $vResponse['data']['productVariantsBulkUpdate']['userErrors'] ?? [];
-                        if (!empty($vErrs)) {
-                            $batchErrors[] = "{$product->title} variants: " . $vErrs[0]['message'];
-                            $variantUpdateFailed = true;
-                        } elseif (isset($vResponse['errors'])) {
-                            $batchErrors[] = "{$product->title} variants: " . $vResponse['errors'][0]['message'];
-                            $variantUpdateFailed = true;
-                        }
-                    }
-                    
-                    if ($variantUpdateFailed) {
-                        $pushed++;
-                        continue;
-                    }
-                    
-                    foreach ($variants as $variant) {
-                        if ($variant->variant_gid) {
-                            $inventory = DB::table('inventory_cache')->where('variant_cache_id', $variant->id)->first();
-                            $invItemId = $variant->inventory_item_gid ?? clone $variant->inventory_item_id ?? null;
-                            if (!$invItemId && isset($variant->inventory_item_id)) { $invItemId = $variant->inventory_item_id; }
-                            
-                            if ($inventory && $invItemId && $inventory->location_gid) {
-                                $client->query([
-                                    'query' => 'mutation inventorySet($input: InventorySetOnHandQuantitiesInput!) { inventorySetOnHandQuantities(input: $input) { userErrors { message } } }',
-                                    'variables' => [
-                                        'input' => [
-                                            'reason' => 'correction',
-                                            'setQuantities' => [
-                                                [
-                                                    'inventoryItemId' => $invItemId,
-                                                    'locationId' => $inventory->location_gid,
-                                                    'quantity' => (int) $inventory->available
-                                                ]
-                                            ]
-                                        ]
-                                    ]
-                                ]);
-                            }
-                        }
-                    }
+                    [$remoteState, $remoteVariantGids] = $syncProductVariants($product, $productId, $remoteState);
                 }
                 
-                if ($syncMode !== 'seo' && $product->image_url) {
-                    $mediaUrl = str_starts_with($product->image_url, '/uploads/') ? 'https://' . $host . $product->image_url : $product->image_url;
-                    
-                    \Illuminate\Support\Facades\Log::info("Sending mediaUrl to Shopify: " . $mediaUrl);
-                    $mediaExists = false;
-                    if ($exists && isset($existingMedia)) {
-                        foreach ($existingMedia as $mediaNode) {
-                            $nodeUrl = $mediaNode['image']['url'] ?? '';
-                            // Basic match: if we already have this exact Shopify CDN url, or if it's an existing image.
-                            // To prevent endless duplicates for local uploads, we can assume if the product has ANY media, it's synced.
-                            // Wait, if it's a local upload, it won't match a Shopify CDN url. 
-                            $baseNodeUrl = explode('?', $nodeUrl)[0];
-                            $baseMediaUrl = explode('?', $mediaUrl)[0];
-                            if ($baseNodeUrl === $baseMediaUrl || str_contains($product->image_name ?? '', $mediaNode['id'] ?? '')) {
-                                $mediaExists = true;
+                if ($syncMode !== 'seo') {
+                    $imagesData = $product->images_data !== null
+                        ? json_decode($product->images_data, true)
+                        : null;
+                    $hasCompleteImageList = is_array($imagesData) && count($imagesData) < 10;
+                    if (!is_array($imagesData)) {
+                        $imagesData = $product->image_url
+                            ? [['url' => $product->image_url, 'altText' => $product->image_alt ?? $product->title]]
+                            : [];
+                    }
+                    $imagesData = array_values($imagesData);
+                    $existingMedia = $remoteState['media']['nodes'] ?? [];
+                    $existingMediaById = [];
+                    $existingImageByUrl = [];
+                    foreach ($existingMedia as $mediaNode) {
+                        $existingMediaById[$mediaNode['id']] = $mediaNode;
+                        if (($mediaNode['mediaContentType'] ?? '') === 'IMAGE' && !empty($mediaNode['image']['url'])) {
+                            $existingImageByUrl[explode('?', $mediaNode['image']['url'])[0]] = $mediaNode['id'];
+                        }
+                    }
+
+                    $desiredImageIds = [];
+                    $pendingMedia = [];
+                    foreach ($imagesData as $imageIndex => $image) {
+                        if (!is_array($image) || empty($image['url'])) {
+                            $batchErrors[] = "{$product->title} media item " . ($imageIndex + 1) . ': Cached image URL is missing.';
+                            continue;
+                        }
+                        $mediaId = $image['id'] ?? null;
+                        if ($mediaId && isset($existingMediaById[$mediaId]) && ($existingMediaById[$mediaId]['mediaContentType'] ?? '') === 'IMAGE') {
+                            $desiredImageIds[$imageIndex] = $mediaId;
+                            continue;
+                        }
+                        $mediaUrl = $image['url'];
+                        $urlKey = explode('?', $mediaUrl)[0];
+                        if (isset($existingImageByUrl[$urlKey])) {
+                            $mediaId = $existingImageByUrl[$urlKey];
+                            $desiredImageIds[$imageIndex] = $mediaId;
+                            $imagesData[$imageIndex]['id'] = $mediaId;
+                            continue;
+                        }
+
+                        $sourceUrl = $mediaUrl;
+                        $parsedPath = parse_url($mediaUrl, PHP_URL_PATH) ?: $mediaUrl;
+                        $uploadPosition = strpos($parsedPath, '/uploads/');
+                        if ($uploadPosition !== false) {
+                            $localPath = public_path('uploads/' . basename($parsedPath));
+                            if (!file_exists($localPath)) {
+                                throw new \RuntimeException("{$product->title} media item " . ($imageIndex + 1) . ": Local image file is missing.");
+                            }
+                            $filename = basename($localPath);
+                            $mimeType = mime_content_type($localPath);
+                            if (!$mimeType) {
+                                throw new \RuntimeException("{$product->title} media item " . ($imageIndex + 1) . ": Could not determine local image type.");
+                            }
+                            $uploadPayload = $runMutation(
+                                'mutation stagedUploadsCreate($input: [StagedUploadInput!]!) { stagedUploadsCreate(input: $input) { stagedTargets { url resourceUrl parameters { name value } } userErrors { field message } } }',
+                                [
+                                    'input' => [[
+                                        'filename' => $filename,
+                                        'mimeType' => $mimeType,
+                                        'httpMethod' => 'POST',
+                                        'resource' => 'IMAGE',
+                                    ]],
+                                ],
+                                'stagedUploadsCreate',
+                                "{$product->title} media upload preparation"
+                            );
+                            $target = $uploadPayload['stagedTargets'][0] ?? null;
+                            if (!$target || empty($target['url']) || empty($target['resourceUrl'])) {
+                                throw new \RuntimeException("{$product->title} media item " . ($imageIndex + 1) . ': Shopify did not return a staged upload target.');
+                            }
+                            $postData = [];
+                            foreach ($target['parameters'] ?? [] as $parameter) {
+                                $postData[$parameter['name']] = $parameter['value'];
+                            }
+                            $fileContents = file_get_contents($localPath);
+                            if ($fileContents === false) {
+                                throw new \RuntimeException("{$product->title} media item " . ($imageIndex + 1) . ': Could not read the local image file.');
+                            }
+                            $uploadResponse = \Illuminate\Support\Facades\Http::attach(
+                                'file',
+                                $fileContents,
+                                $filename,
+                                ['Content-Type' => $mimeType]
+                            )->post($target['url'], $postData);
+                            if (!$uploadResponse->successful()) {
+                                throw new \RuntimeException("{$product->title} media item " . ($imageIndex + 1) . ': Shopify rejected the staged image upload.');
+                            }
+                            $sourceUrl = $target['resourceUrl'];
+                        }
+                        $pendingMedia[] = [
+                            'index' => $imageIndex,
+                            'source' => $sourceUrl,
+                            'alt' => $image['altText'] ?? $image['alt'] ?? $product->title,
+                        ];
+                    }
+
+                    if ($pendingMedia) {
+                        $runMutation(
+                            'mutation ProductMediaUpdate($product: ProductUpdateInput!, $media: [CreateMediaInput!]) { productUpdate(product: $product, media: $media) { product { id } userErrors { field message } } }',
+                            [
+                                'product' => ['id' => $productId],
+                                'media' => array_map(function ($item) {
+                                    return [
+                                        'alt' => $item['alt'],
+                                        'mediaContentType' => 'IMAGE',
+                                        'originalSource' => $item['source'],
+                                    ];
+                                }, $pendingMedia),
+                            ],
+                            'productUpdate',
+                            "{$product->title} media creation"
+                        );
+                        $newMediaIds = [];
+                        for ($attempt = 0; $attempt < 30; $attempt++) {
+                            $remoteState = $fetchProductSyncState($productId);
+                            if ($remoteState === null) {
+                                throw new \RuntimeException("{$product->title}: Shopify media could not be verified after creation.");
+                            }
+                            $newMediaIds = array_values(array_filter(
+                                array_column($remoteState['media']['nodes'] ?? [], 'id'),
+                                fn($mediaId) => !isset($existingMediaById[$mediaId])
+                            ));
+                            if (count($newMediaIds) >= count($pendingMedia)) {
                                 break;
                             }
+                            usleep(500000);
                         }
-                    }
-                    
-                    if (!$mediaExists) {
-                        $isLocal = str_starts_with($product->image_url, '/uploads/');
-                        $finalSourceUrl = $mediaUrl;
-
-                        if ($isLocal) {
-                            $filePath = public_path($product->image_url);
-                            if (file_exists($filePath)) {
-                                $filename = basename($filePath);
-                                $mime = mime_content_type($filePath);
-
-                                $stagedUploadQuery = <<<'GRAPHQL'
-mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
-  stagedUploadsCreate(input: $input) {
-    stagedTargets {
-      url
-      resourceUrl
-      parameters {
-        name
-        value
-      }
-    }
-  }
-}
-GRAPHQL;
-                                $stagedRes = $client->query([
-                                    'query' => $stagedUploadQuery,
-                                    'variables' => [
-                                        'input' => [
-                                            [
-                                                'filename' => $filename,
-                                                'mimeType' => $mime,
-                                                'httpMethod' => 'POST',
-                                                'resource' => 'IMAGE'
-                                            ]
-                                        ]
-                                    ]
-                                ])->getDecodedBody();
-
-                                $target = $stagedRes['data']['stagedUploadsCreate']['stagedTargets'][0] ?? null;
-                                if ($target) {
-                                    $postData = [];
-                                    foreach ($target['parameters'] as $param) {
-                                        $postData[$param['name']] = $param['value'];
-                                    }
-                                    
-                                    $httpResponse = \Illuminate\Support\Facades\Http::attach(
-                                        'file', file_get_contents($filePath), $filename
-                                    )->post($target['url'], $postData);
-
-                                    if ($httpResponse->successful()) {
-                                        $finalSourceUrl = $target['resourceUrl'];
-                                    }
-                                }
+                        if (count($newMediaIds) !== count($pendingMedia)) {
+                            throw new \RuntimeException("{$product->title}: Shopify did not return an ID for every newly created image.");
+                        }
+                        $imagesReady = false;
+                        for ($attempt = 0; $attempt < 30; $attempt++) {
+                            $newImages = array_values(array_filter(
+                                $remoteState['media']['nodes'] ?? [],
+                                fn($mediaNode) => in_array($mediaNode['id'], $newMediaIds, true)
+                            ));
+                            $failedImage = collect($newImages)->firstWhere('status', 'FAILED');
+                            if ($failedImage) {
+                                $mediaErrors = $failedImage['mediaErrors'] ?? [];
+                                $details = $mediaErrors
+                                    ? $formatGraphqlErrors($mediaErrors)
+                                    : 'Shopify failed to process the image.';
+                                throw new \RuntimeException("{$product->title} media creation: {$details}");
+                            }
+                            $imagesReady = count($newImages) === count($pendingMedia) &&
+                                collect($newImages)->every(fn($mediaNode) => ($mediaNode['status'] ?? '') === 'READY');
+                            if ($imagesReady) {
+                                break;
+                            }
+                            usleep(500000);
+                            $remoteState = $fetchProductSyncState($productId);
+                            if ($remoteState === null) {
+                                throw new \RuntimeException("{$product->title}: Shopify media could not be verified after creation.");
                             }
                         }
-
-                        $res = $client->query([
-                            'query' => 'mutation productCreateMedia($media: [CreateMediaInput!]!, $productId: ID!) { productCreateMedia(media: $media, productId: $productId) { media { id mediaErrors { message } } userErrors { field message } } }',
-                            'variables' => [
-                                'productId' => $productId,
-                                'media' => [
-                                    [
-                                        'alt' => $product->image_alt ?: ($product->title . ' image'),
-                                        'mediaContentType' => 'IMAGE',
-                                        'originalSource' => $finalSourceUrl
-                                    ]
-                                ]
-                            ]
-                        ])->getDecodedBody();
-                        
-                        $newMediaId = $res['data']['productCreateMedia']['media'][0]['id'] ?? null;
-                        if ($newMediaId && $isLocal) {
-                            DB::table('products_cache')->where('id', $product->id)->update([
-                                'image_name' => $newMediaId
-                            ]);
+                        if (!$imagesReady) {
+                            throw new \RuntimeException("{$product->title}: Shopify image processing did not finish before the sync timed out.");
+                        }
+                        foreach ($pendingMedia as $index => $item) {
+                            $mediaId = $newMediaIds[$index];
+                            $desiredImageIds[$item['index']] = $mediaId;
+                            $imagesData[$item['index']]['id'] = $mediaId;
+                        }
+                        $existingMedia = $remoteState['media']['nodes'] ?? [];
+                        foreach ($existingMedia as $mediaNode) {
+                            $existingMediaById[$mediaNode['id']] = $mediaNode;
                         }
                     }
+
+                    $desiredImageIds = array_values(array_unique($desiredImageIds));
+                    if ($hasCompleteImageList) {
+                        $staleImageIds = [];
+                        foreach ($existingMedia as $mediaNode) {
+                            if (($mediaNode['mediaContentType'] ?? '') === 'IMAGE' &&
+                                !in_array($mediaNode['id'], $desiredImageIds, true)) {
+                                $staleImageIds[] = $mediaNode['id'];
+                            }
+                        }
+                        if ($staleImageIds) {
+                            $runMutation(
+                                'mutation FileUpdateMediaReferences($files: [FileUpdateInput!]!) { fileUpdate(files: $files) { files { id } userErrors { field message } } }',
+                                [
+                                    'files' => array_map(fn($mediaId) => [
+                                        'id' => $mediaId,
+                                        'referencesToRemove' => [$productId],
+                                    ], $staleImageIds),
+                                ],
+                                'fileUpdate',
+                                "{$product->title} stale media removal"
+                            );
+                        }
+                    }
+
+                    $remoteState = $fetchProductSyncState($productId);
+                    if ($remoteState === null) {
+                        throw new \RuntimeException("{$product->title}: Shopify media could not be verified.");
+                    }
+                    $currentMedia = $remoteState['media']['nodes'] ?? [];
+                    $currentMediaIds = array_column($currentMedia, 'id');
+                    $orderedMediaIds = array_merge(
+                        array_values(array_filter($desiredImageIds, fn($id) => in_array($id, $currentMediaIds, true))),
+                        array_values(array_filter($currentMediaIds, fn($id) => !in_array($id, $desiredImageIds, true)))
+                    );
+                    $moves = [];
+                    foreach ($orderedMediaIds as $position => $mediaId) {
+                        if (($currentMediaIds[$position] ?? null) !== $mediaId) {
+                            $moves[] = ['id' => $mediaId, 'newPosition' => (string) $position];
+                        }
+                    }
+                    if ($moves) {
+                        $reorderPayload = $runMutation(
+                            'mutation productReorderMedia($id: ID!, $moves: [MoveInput!]!) { productReorderMedia(id: $id, moves: $moves) { job { id } mediaUserErrors { field message } } }',
+                            ['id' => $productId, 'moves' => $moves],
+                            'productReorderMedia',
+                            "{$product->title} media reorder"
+                        );
+                        $jobGid = $reorderPayload['job']['id'] ?? null;
+                        if (!$jobGid) {
+                            throw new \RuntimeException("{$product->title}: Shopify did not return a media reorder job.");
+                        }
+                        $jobDone = false;
+                        for ($attempt = 0; $attempt < 30; $attempt++) {
+                            $jobData = $runQuery(
+                                'query ProductMediaReorderJob($id: ID!) { job(id: $id) { id done } }',
+                                ['id' => $jobGid],
+                                "{$product->title} media reorder status"
+                            );
+                            $job = $jobData['job'] ?? null;
+                            if (!$job) {
+                                throw new \RuntimeException("{$product->title}: Shopify media reorder job could not be found.");
+                            }
+                            if (!empty($job['done'])) {
+                                $jobDone = true;
+                                break;
+                            }
+                            usleep(500000);
+                        }
+                        if (!$jobDone) {
+                            throw new \RuntimeException("{$product->title}: Shopify media reorder did not finish before the sync timed out.");
+                        }
+                    }
+
+                    DB::table('products_cache')->where('id', $product->id)->where('shop_domain', $shop)->update([
+                        'images_data' => json_encode($imagesData),
+                    ]);
                 }
 
                 $pushed++;
-                DB::table('products_cache')->where('id', $product->id)->update(['sync_pending' => false]);
+                if (count($batchErrors) === $productErrorCount) {
+                    DB::table('products_cache')
+                        ->where('id', $product->id)
+                        ->where('shop_domain', $shop)
+                        ->update(['sync_pending' => false]);
+                }
                 if ($syncMode !== 'seo' && !empty($remoteVariantGids)) {
                     DB::table('variants_cache')
                         ->where('product_cache_id', $product->id)
@@ -1713,7 +2361,8 @@ GRAPHQL;
                 
             } catch (\Throwable $exception) {
                 \Illuminate\Support\Facades\Log::error('Push sync error: ' . $exception->getMessage());
-                $pushed++; // increment so we don't get stuck in infinite loop
+                $batchErrors[] = "{$product->title}: " . $exception->getMessage();
+                $pushed++;
             }
         }
         
@@ -1753,6 +2402,12 @@ GRAPHQL;
                 'error_message' => $newErrorMsg
             ]);
         }
+        if (!$hasMore && $jobId) {
+            $completedJob = DB::table('bulk_jobs')->where('id', $jobId)->first();
+            if ($completedJob && !empty($completedJob->error_message)) {
+                DB::table('bulk_jobs')->where('id', $jobId)->update(['status' => 'Failed']);
+            }
+        }
 
         return response()->json(['more_remaining' => $hasMore, 'pushed_this_batch' => $pushed, 'completed_at' => now()->toIso8601String(), 'jobId' => $jobId, 'errors' => $batchErrors]);
     });
@@ -1762,6 +2417,7 @@ GRAPHQL;
             ->join('products_cache', 'products_cache.id', '=', 'inventory_cache.product_cache_id')
             ->leftJoin('variants_cache', 'variants_cache.id', '=', 'inventory_cache.variant_cache_id')
             ->where('products_cache.shop_domain', $request->get('shopifySession')->getShop())
+            ->whereNull('variants_cache.superseded_by_variant_cache_id')
             ->select('inventory_cache.id', 'products_cache.title as product', 'variants_cache.sku', 'inventory_cache.location_name as location', 'inventory_cache.available')
             ->orderBy('products_cache.title')
             ->get();
@@ -1907,9 +2563,16 @@ GRAPHQL;
             ->chunk(100, function ($products) use (&$dataRows, $includeImages, $includeVariants) {
                 foreach ($products as $product) {
                     if ($includeVariants) {
-                        $variants = DB::table('variants_cache')->where('product_cache_id', $product->id)->get();
+                        $variants = DB::table('variants_cache')
+                            ->where('product_cache_id', $product->id)
+                            ->whereNull('superseded_by_variant_cache_id')
+                            ->get();
                         if ($variants->isEmpty()) {
-                            $inventory = DB::table('inventory_cache')->where('product_cache_id', $product->id)->sum('available');
+                            $inventory = DB::table('inventory_cache')
+                                ->leftJoin('variants_cache', 'variants_cache.id', '=', 'inventory_cache.variant_cache_id')
+                                ->where('inventory_cache.product_cache_id', $product->id)
+                                ->whereNull('variants_cache.superseded_by_variant_cache_id')
+                                ->sum('inventory_cache.available');
                             $row = [
                                 $product->product_gid,
                                 $product->title,
@@ -1940,9 +2603,16 @@ GRAPHQL;
                             }
                         }
                     } else {
-                        $inventory = DB::table('inventory_cache')->where('product_cache_id', $product->id)->sum('available');
-                        $price = DB::table('variants_cache')->where('product_cache_id', $product->id)->min('price');
-                        $sku = DB::table('variants_cache')->where('product_cache_id', $product->id)->first()->sku ?? '';
+                        $inventory = DB::table('inventory_cache')
+                            ->leftJoin('variants_cache', 'variants_cache.id', '=', 'inventory_cache.variant_cache_id')
+                            ->where('inventory_cache.product_cache_id', $product->id)
+                            ->whereNull('variants_cache.superseded_by_variant_cache_id')
+                            ->sum('inventory_cache.available');
+                        $activeVariants = DB::table('variants_cache')
+                            ->where('product_cache_id', $product->id)
+                            ->whereNull('superseded_by_variant_cache_id');
+                        $price = (clone $activeVariants)->min('price');
+                        $sku = $activeVariants->first()->sku ?? '';
                         $row = [
                             $product->product_gid,
                             $product->title,
@@ -2293,7 +2963,10 @@ GRAPHQL;
     Route::get('/health', function (Illuminate\Http\Request $request) {
         $shop = $request->get('shopifySession')->getShop();
         $products = Illuminate\Support\Facades\DB::table('products_cache')->where('shop_domain', $shop)->get();
-        $variants = Illuminate\Support\Facades\DB::table('variants_cache')->whereIn('product_cache_id', $products->pluck('id'))->get();
+        $variants = Illuminate\Support\Facades\DB::table('variants_cache')
+            ->whereIn('product_cache_id', $products->pluck('id'))
+            ->whereNull('superseded_by_variant_cache_id')
+            ->get();
         
         $missingImages = [];
         $incompleteDesc = [];

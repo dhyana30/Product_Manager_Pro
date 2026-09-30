@@ -387,17 +387,14 @@ export default function Catalog() {
         let currentPrice = parseFloat(p.price);
         if (isNaN(currentPrice)) currentPrice = 0;
         
+        const direction = adj.action === "decrease" ? -1 : 1;
         let newPrice = currentPrice;
         const val = parseFloat(adj.value || 0);
         if (adj.type === "percentage") {
-          newPrice = currentPrice * (1 + val / 100);
+          newPrice = currentPrice * (1 + direction * val / 100);
         } else {
-          newPrice = currentPrice + val;
+          newPrice = currentPrice + direction * val;
         }
-        
-        if (adj.round === "2") newPrice = Math.round(newPrice * 100) / 100;
-        else if (adj.round === "99") newPrice = Math.floor(newPrice) + 0.99;
-        else if (adj.round === "0") newPrice = Math.round(newPrice);
         
         await authenticatedFetch(`/api/products/${p.id}`, {
           method: "PUT",
@@ -2388,7 +2385,7 @@ function PriceButton({ disabled, selectedProducts, onApply, loading }) {
     if (open && selectedProducts) {
       const initial = {};
       selectedProducts.forEach(p => {
-        initial[p.id] = { type: "percentage", value: "10", round: "2" };
+        initial[p.id] = { type: "percentage", action: "increase", value: "10" };
       });
       setAdjustments(initial);
     }
@@ -2415,22 +2412,19 @@ function PriceButton({ disabled, selectedProducts, onApply, loading }) {
         <Modal.Section>
           <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
             {selectedProducts && selectedProducts.map(p => {
-              const adj = adjustments[p.id] || { type: "percentage", value: "10", round: "2" };
+              const adj = adjustments[p.id] || { type: "percentage", action: "increase", value: "10" };
               
               let currentPrice = parseFloat(p.price);
               if (isNaN(currentPrice)) currentPrice = 0;
               
+              const direction = adj.action === "decrease" ? -1 : 1;
               let newPrice = currentPrice;
               const val = parseFloat(adj.value || 0);
               if (adj.type === "percentage") {
-                newPrice = currentPrice * (1 + val / 100);
+                newPrice = currentPrice * (1 + direction * val / 100);
               } else {
-                newPrice = currentPrice + val;
+                newPrice = currentPrice + direction * val;
               }
-              
-              if (adj.round === "2") newPrice = Math.round(newPrice * 100) / 100;
-              else if (adj.round === "99") newPrice = Math.floor(newPrice) + 0.99;
-              else if (adj.round === "0") newPrice = Math.round(newPrice);
               
               return (
                 <div key={p.id} style={{ border: "1px solid #dfe3e8", borderRadius: "8px", padding: "16px" }}>
@@ -2441,16 +2435,15 @@ function PriceButton({ disabled, selectedProducts, onApply, loading }) {
                     </Text>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px" }}>
+                    <Select label="Action" value={adj.action || "increase"} onChange={(v) => updateAdj(p.id, 'action', v)} options={[
+                      { label: "Increase", value: "increase" },
+                      { label: "Decrease", value: "decrease" },
+                    ]} />
                     <Select label="Adjustment type" value={adj.type} onChange={(v) => updateAdj(p.id, 'type', v)} options={[
-                      { label: "Percentage", value: "percentage" },
                       { label: "Fixed amount", value: "fixed" },
+                      { label: "Percentage", value: "percentage" },
                     ]} />
                     <TextField label="Value" type="number" value={adj.value} onChange={(v) => updateAdj(p.id, 'value', v)} suffix={adj.type === "percentage" ? "%" : "USD"} autoComplete="off" />
-                    <Select label="Round to" value={adj.round} onChange={(v) => updateAdj(p.id, 'round', v)} options={[
-                      { label: "No rounding", value: "0" },
-                      { label: "2 decimals", value: "2" },
-                      { label: "Nearest .99", value: "99" },
-                    ]} />
                   </div>
                 </div>
               );

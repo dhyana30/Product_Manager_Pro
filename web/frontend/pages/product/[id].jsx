@@ -976,6 +976,29 @@ const allCountries = [
   }
 ];
 
+const getVariantOptionGroups = (variants) => {
+  const groups = new Map();
+
+  (variants || []).forEach((variant) => {
+    const optionEntries = [
+      ...(Array.isArray(variant.selectedOptions) ? variant.selectedOptions : []),
+      ...(Array.isArray(variant.options) ? variant.options : []),
+      ...(variant.options && !Array.isArray(variant.options) && typeof variant.options === 'object'
+        ? Object.entries(variant.options).map(([name, value]) => ({ name, value }))
+        : []),
+    ];
+
+    optionEntries.forEach((option) => {
+      if (!option?.name || option.value === undefined || option.value === null || option.value === '') return;
+      const values = groups.get(option.name) || [];
+      if (!values.includes(option.value)) values.push(option.value);
+      groups.set(option.name, values);
+    });
+  });
+
+  return Array.from(groups, ([name, values]) => ({ name, values }));
+};
+
 function ProductEdit() {
   const { id } = useParams();
   const location = useLocation();
@@ -1154,6 +1177,8 @@ function ProductEdit() {
   const [variantOptions, setVariantOptions] = useState([]);
   const [variantPopoverActive, setVariantPopoverActive] = useState(false);
   const [activeMetafieldPopoverIndex, setActiveMetafieldPopoverIndex] = useState(null);
+  const existingVariants = product?.variants_list || [];
+  const existingVariantOptionGroups = getVariantOptionGroups(existingVariants);
 
   const [purchaseOptions, setPurchaseOptions] = useState([]);
   const [purchaseOptionsPopoverActive, setPurchaseOptionsPopoverActive] = useState(false);
@@ -1962,6 +1987,35 @@ function ProductEdit() {
                 <Text variant="headingSm" as="h3">Variants</Text>
                 
                 <div style={{ marginTop: '16px' }}>
+                  {existingVariantOptionGroups.length > 0 && (
+                    <div style={{ marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {existingVariantOptionGroups.map((option) => (
+                        <div key={option.name} style={{ display: 'flex', gap: '8px', fontSize: '14px' }}>
+                          <span style={{ color: '#202223', fontWeight: 500 }}>{option.name}</span>
+                          <span style={{ color: '#6d7175' }}>→ {option.values.join(', ')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {existingVariants.length > 0 && (
+                    <div style={{ border: '1px solid #dfe3e8', borderRadius: '8px', overflow: 'hidden', marginBottom: '16px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 2fr) repeat(3, minmax(80px, 1fr))', gap: '12px', padding: '10px 12px', backgroundColor: '#f6f6f7', borderBottom: '1px solid #dfe3e8' }}>
+                        {['Variant', 'SKU', 'Price', 'Available'].map((heading) => (
+                          <span key={heading} style={{ color: '#6d7175', fontSize: '12px', fontWeight: 600 }}>{heading}</span>
+                        ))}
+                      </div>
+                      {existingVariants.map((variant, index) => (
+                        <div key={variant.id || `${variant.title || 'variant'}-${index}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 2fr) repeat(3, minmax(80px, 1fr))', gap: '12px', padding: '12px', borderBottom: index < existingVariants.length - 1 ? '1px solid #dfe3e8' : 'none', alignItems: 'center' }}>
+                          <span style={{ color: '#202223', fontSize: '14px' }}>{variant.title || 'Default Title'}</span>
+                          <span style={{ color: '#6d7175', fontSize: '14px' }}>{variant.sku || '—'}</span>
+                          <span style={{ color: '#202223', fontSize: '14px' }}>{variant.price !== undefined && variant.price !== null && variant.price !== '' ? `$${variant.price}` : '—'}</span>
+                          <span style={{ color: '#202223', fontSize: '14px' }}>{variant.inventory ?? '—'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {variantOptions.length === 0 ? (
                     <Popover
                       active={variantPopoverActive}

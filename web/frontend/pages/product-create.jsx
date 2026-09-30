@@ -1053,15 +1053,9 @@ export default function ProductCreate() {
   };
   const [sellOutOfStock, setSellOutOfStock] = useState(false);
   const [locationsModalOpen, setLocationsModalOpen] = useState(false);
-  const [locations, setLocations] = useState([
-    { id: '1', name: 'depot 1', quantity: 0, checked: true },
-    { id: '2', name: 'depot 2', quantity: 0, checked: true },
-    { id: '3', name: 'depot 3', quantity: 0, checked: true },
-    { id: '4', name: 'My Custom Location', quantity: 0, checked: true },
-    { id: '5', name: 'Shop', quantity: 0, checked: true },
-    { id: '6', name: 'Shop location', quantity: 0, checked: true },
-    { id: '7', name: 'Snow City Warehouse', app: 'App', subtitle: 'Add a SKU to use this location.', quantity: 0, checked: false, disabled: true }
-  ]);
+  const [locations, setLocations] = useState([]);
+  const [locationsLoading, setLocationsLoading] = useState(true);
+  const [locationsError, setLocationsError] = useState('');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const descriptionRef = useRef(description);
@@ -1194,9 +1188,40 @@ export default function ProductCreate() {
     <Toast {...toastProps} onDismiss={() => setToastProps({ content: null })} />
   ) : null;
 
+  useEffect(() => {
+    const loadLocations = async () => {
+      try {
+        const response = await fetch('/api/locations');
+        const data = await response.json();
+        if (!response.ok || !Array.isArray(data)) {
+          throw new Error(data.error || 'Unable to load Shopify inventory locations.');
+        }
+        setLocations(data.map((location) => ({
+          id: location.id,
+          name: location.name,
+          quantity: 0,
+          checked: true,
+        })));
+        setLocationsError('');
+      } catch (error) {
+        setLocationsError(error.message || 'Unable to load Shopify inventory locations.');
+        setToastProps({ content: error.message || 'Unable to load Shopify inventory locations.', error: true });
+      } finally {
+        setLocationsLoading(false);
+      }
+    };
+    loadLocations();
+  }, [fetch]);
+
   const handleSave = async () => {
     setIsSaving(true);
     try {
+      if (inventoryTracked && locationsLoading) {
+        throw new Error('Shopify inventory locations are still loading. Try again in a moment.');
+      }
+      if (inventoryTracked && locationsError) {
+        throw new Error(`Inventory quantities cannot be saved: ${locationsError}`);
+      }
       const response = await fetch('/api/products/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1206,10 +1231,12 @@ export default function ProductCreate() {
           vendor,
           productType,
           category,
+          template: selectedTemplate,
           status,
           price,
           sku,
           weight,
+          weightUnit,
           compareAtPrice,
           costPerItem,
           taxable,
